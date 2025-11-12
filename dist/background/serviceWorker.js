@@ -11,6 +11,47 @@ Your job:
 The user sees you as a "futuristic layer on top of the web": whenever they describe what they want in plain English, you "patch" the website to behave that way.
 
 ------------------------------------------------
+## Available Tools
+
+You have access to powerful DOM exploration tools that let you dynamically search and inspect the page:
+
+**DOM Inspection Tools:**
+
+1. **search_dom(selector)** - Search for elements using CSS selectors
+   - Returns: Array of matching elements with their properties
+   - Example: search_dom(".post-button") to find all post buttons
+
+2. **read_element(selector, includeHTML?)** - Get detailed info about a specific element
+   - Returns: Element details, computed styles, position, and optionally innerHTML
+   - Example: read_element("#main-feed", true) to read the main feed structure
+
+3. **get_page_structure(maxDepth?, rootSelector?)** - Get hierarchical DOM structure
+   - Returns: Tree structure showing parent-child relationships
+   - Example: get_page_structure(3, "main") to see the structure of the main element
+
+**Raw HTML Source Tools:**
+
+4. **search_page_source(searchTerm, maxResults?)** - Search raw HTML source code
+   - Returns: Matching lines with context (2 lines before/after)
+   - Example: search_page_source("data-testid") to find all test IDs in source
+   - Use this to find class names, IDs, or attributes that might not be in the DOM snapshot
+
+5. **read_page_source(startLine?, endLine?)** - Read specific lines from HTML source
+   - Returns: Raw HTML source code with line numbers
+   - Example: read_page_source(1, 100) to read the first 100 lines
+   - Use this to see the actual HTML structure, including comments and formatting
+
+**When to use tools:**
+- If you need to find specific elements not in the initial context
+- If you need detailed styling information
+- If you need to understand the DOM hierarchy
+- If you're unsure about element selectors
+- If you need to see the raw HTML source (scripts, comments, exact formatting)
+- If you need to find dynamically generated class names or IDs
+
+**Important:** Use these tools to explore the page BEFORE generating code. This ensures your selectors are accurate.
+
+------------------------------------------------
 ## Inputs You Receive
 
 You will be given:
@@ -130,7 +171,9 @@ var MESSAGE_TYPES = {
   PAGE_CONTEXT_READY: "PAGE_CONTEXT_READY",
   FEATURE_RESPONSE: "FEATURE_RESPONSE",
   INJECT_PATCHES: "INJECT_PATCHES",
-  ERROR: "ERROR"
+  ERROR: "ERROR",
+  EXECUTE_TOOL: "EXECUTE_TOOL",
+  TOOL_RESULT: "TOOL_RESULT"
 };
 var FEATURE_SCOPE_TYPES = {
   HOSTNAME: "hostname",
@@ -4572,7 +4615,7 @@ var LLMClient = class {
       dangerouslyAllowBrowser: true
     });
   }
-  async callWebFeatureBuilder(request) {
+  async callWebFeatureBuilder(request, tabId) {
     const { userInstruction, pageContext, screenshotBase64 } = request;
     try {
       if (!this.anthropic) {
@@ -4580,7 +4623,7 @@ var LLMClient = class {
         return this.getMockResponse(userInstruction);
       }
       const messages = this.buildMessages(userInstruction, pageContext, screenshotBase64);
-      const response = await this.makeAnthropicAPICall(messages);
+      const response = await this.makeAnthropicAPICall(messages, tabId);
       return this.parseResponse(response);
     } catch (error) {
       console.error("LLM API call failed:", error);
@@ -4607,25 +4650,26 @@ Page Context:
 - Title: ${pageContext.domSummary.title}
 - DOM Elements: ${pageContext.domSummary.elements.length} key elements detected
 
-`;
-    if (pageContext.domSummary.fullHTML) {
-      textContent += `Complete HTML Structure:
-\`\`\`html
-${pageContext.domSummary.fullHTML}
-\`\`\`
-
-`;
-    }
-    textContent += `Key Page Elements (Summary):
-${pageContext.domSummary.elements.slice(0, 100).map((el) => {
+Key Page Elements (Top ${Math.min(50, pageContext.domSummary.elements.length)}):
+${pageContext.domSummary.elements.slice(0, 50).map((el) => {
       const parts = [];
       if (el.tagName) parts.push(`<${el.tagName}>`);
       if (el.id) parts.push(`id="${el.id}"`);
-      if (el.className) parts.push(`class="${el.className}"`);
+      if (el.className) {
+        const className = el.className.length > 100 ? el.className.substring(0, 100) + "..." : el.className;
+        parts.push(`class="${className}"`);
+      }
       if (el.role) parts.push(`role="${el.role}"`);
-      if (el.innerText && el.innerText.length < 100) parts.push(`text="${el.innerText}"`);
+      if (el.innerText && el.innerText.length < 80) parts.push(`text="${el.innerText}"`);
       return `- ${parts.join(" ")}`;
     }).join("\n")}
+
+**Note:** If you need more details about the page structure, use the available tools:
+- search_dom(selector) - Find specific elements
+- read_element(selector) - Get detailed element info
+- get_page_structure() - See DOM hierarchy
+- search_page_source(term) - Search HTML source
+- read_page_source(start, end) - Read HTML source lines
 
 Please respond with valid JSON following the exact schema specified in the system prompt.`;
     content.push({
@@ -4650,24 +4694,152 @@ Please respond with valid JSON following the exact schema specified in the syste
       }
     ];
   }
-  async makeAnthropicAPICall(messages) {
+  async makeAnthropicAPICall(messages, tabId) {
     if (!this.anthropic) {
       throw new Error("Anthropic client not initialized");
     }
-    const response = await this.anthropic.messages.create({
-      model: this.config.model,
-      max_tokens: 4e3,
-      system: WEB_FEATURE_BUILDER_SYSTEM_PROMPT,
-      messages
-    });
-    if (response.content.length === 0) {
-      throw new Error("Empty response from Anthropic API");
+    const tools = [
+      {
+        name: "search_dom",
+        description: "Search the DOM for elements matching a CSS selector. Returns element details including tag, id, class, text content, and attributes.",
+        input_schema: {
+          type: "object",
+          properties: {
+            selector: {
+              type: "string",
+              description: 'CSS selector to search for elements (e.g., ".button", "#header", "[data-testid=\\"submit\\"]")'
+            }
+          },
+          required: ["selector"]
+        }
+      },
+      {
+        name: "read_element",
+        description: "Read detailed information about a specific DOM element, including its HTML structure, computed styles, and position.",
+        input_schema: {
+          type: "object",
+          properties: {
+            selector: {
+              type: "string",
+              description: "CSS selector for the element to read"
+            },
+            includeHTML: {
+              type: "boolean",
+              description: "Whether to include the element's innerHTML"
+            }
+          },
+          required: ["selector"]
+        }
+      },
+      {
+        name: "get_page_structure",
+        description: "Get a hierarchical structure of the page DOM, showing parent-child relationships.",
+        input_schema: {
+          type: "object",
+          properties: {
+            maxDepth: {
+              type: "number",
+              description: "Maximum depth to traverse (default: 3)"
+            },
+            rootSelector: {
+              type: "string",
+              description: "Root element to start from (default: body)"
+            }
+          }
+        }
+      },
+      {
+        name: "search_page_source",
+        description: "Search the raw HTML source code for a specific term or pattern. Returns matching lines with context.",
+        input_schema: {
+          type: "object",
+          properties: {
+            searchTerm: {
+              type: "string",
+              description: "Text or regex pattern to search for in the HTML source"
+            },
+            maxResults: {
+              type: "number",
+              description: "Maximum number of results to return (default: 20)"
+            }
+          },
+          required: ["searchTerm"]
+        }
+      },
+      {
+        name: "read_page_source",
+        description: "Read a specific range of lines from the raw HTML source code. Useful for examining the page structure.",
+        input_schema: {
+          type: "object",
+          properties: {
+            startLine: {
+              type: "number",
+              description: "Starting line number (1-indexed, default: 1)"
+            },
+            endLine: {
+              type: "number",
+              description: "Ending line number (default: startLine + 50)"
+            }
+          }
+        }
+      }
+    ];
+    let currentMessages = [...messages];
+    let maxIterations = 5;
+    let iteration = 0;
+    while (iteration < maxIterations) {
+      iteration++;
+      const response = await this.anthropic.messages.create({
+        model: this.config.model,
+        max_tokens: 4e3,
+        system: WEB_FEATURE_BUILDER_SYSTEM_PROMPT,
+        messages: currentMessages,
+        tools
+      });
+      const toolUseBlocks = response.content.filter((block) => block.type === "tool_use");
+      if (toolUseBlocks.length === 0) {
+        const textContent = response.content.find((content) => content.type === "text");
+        if (!textContent || textContent.type !== "text") {
+          throw new Error("No text content in Anthropic API response");
+        }
+        return textContent.text;
+      }
+      console.log(`Web Augmenter: Claude requested ${toolUseBlocks.length} tool(s)`);
+      currentMessages.push({
+        role: "assistant",
+        content: response.content
+      });
+      const toolResults = [];
+      for (const toolBlock of toolUseBlocks) {
+        if (toolBlock.type !== "tool_use") continue;
+        console.log(`Web Augmenter: Executing tool: ${toolBlock.name}`, toolBlock.input);
+        let toolResult;
+        if (tabId) {
+          try {
+            const response2 = await chrome.tabs.sendMessage(tabId, {
+              type: "EXECUTE_TOOL",
+              toolName: toolBlock.name,
+              toolInput: toolBlock.input
+            });
+            toolResult = response2.result;
+          } catch (error) {
+            toolResult = JSON.stringify({ error: `Failed to execute tool: ${error}` });
+          }
+        } else {
+          toolResult = JSON.stringify({ error: "No tab ID available for tool execution" });
+        }
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: toolBlock.id,
+          content: toolResult
+        });
+      }
+      currentMessages.push({
+        role: "user",
+        content: toolResults
+      });
     }
-    const textContent = response.content.find((content) => content.type === "text");
-    if (!textContent || textContent.type !== "text") {
-      throw new Error("No text content in Anthropic API response");
-    }
-    return textContent.text;
+    throw new Error("Max tool execution iterations reached");
   }
   getMockResponse(userInstruction) {
     const instruction = userInstruction || "create a feature";
@@ -4821,13 +4993,24 @@ Please respond with valid JSON following the exact schema specified in the syste
   parseResponse(response) {
     try {
       let jsonString = response.trim();
-      if (jsonString.startsWith("```")) {
-        const lines = jsonString.split("\n");
-        lines.shift();
-        if (lines[lines.length - 1].trim() === "```") {
-          lines.pop();
+      if (jsonString.includes("```")) {
+        const codeBlockMatch = jsonString.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+        if (codeBlockMatch) {
+          jsonString = codeBlockMatch[1].trim();
         }
-        jsonString = lines.join("\n").trim();
+      }
+      if (!jsonString.startsWith("{")) {
+        const firstBrace = jsonString.indexOf("{");
+        const lastBrace = jsonString.lastIndexOf("}");
+        if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+          jsonString = jsonString.substring(firstBrace, lastBrace + 1);
+        }
+      }
+      if (jsonString.endsWith("}") === false) {
+        const lastBrace = jsonString.lastIndexOf("}");
+        if (lastBrace !== -1) {
+          jsonString = jsonString.substring(0, lastBrace + 1);
+        }
       }
       const parsed = JSON.parse(jsonString);
       if (!parsed.high_level_goal || !parsed.plan) {
@@ -4847,7 +5030,7 @@ Please respond with valid JSON following the exact schema specified in the syste
         notes_for_extension: String(parsed.notes_for_extension || "")
       };
     } catch (error) {
-      console.error("Failed to parse LLM response:", response);
+      console.error("Failed to parse LLM response:", response.substring(0, 500));
       throw new Error(`Invalid JSON response from AI: ${error instanceof Error ? error.message : "Parse error"}`);
     }
   }
@@ -5219,7 +5402,7 @@ var BackgroundService = class {
         userInstruction: pageContext.userInstruction,
         pageContext,
         screenshotBase64
-      });
+      }, sender.tab?.id);
       if (sender.tab?.id) {
         chrome.tabs.sendMessage(sender.tab.id, {
           type: MESSAGE_TYPES.INJECT_PATCHES,

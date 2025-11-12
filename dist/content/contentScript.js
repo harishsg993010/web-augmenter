@@ -11,19 +11,21 @@
     PAGE_CONTEXT_READY: "PAGE_CONTEXT_READY",
     FEATURE_RESPONSE: "FEATURE_RESPONSE",
     INJECT_PATCHES: "INJECT_PATCHES",
-    ERROR: "ERROR"
+    ERROR: "ERROR",
+    EXECUTE_TOOL: "EXECUTE_TOOL",
+    TOOL_RESULT: "TOOL_RESULT"
   };
   var DOM_SNAPSHOT_CONFIG = {
-    MAX_ELEMENTS: 1e3,
-    // Increased to capture more of the DOM
-    MAX_TEXT_LENGTH: 200,
-    // Increased for better context
-    SKIP_HIDDEN_ELEMENTS: false,
-    // Include hidden elements for complete picture
-    INCLUDE_FULL_HTML: true,
-    // Include complete HTML structure
-    MAX_HTML_LENGTH: 1e5,
-    // Max characters for HTML snapshot (100KB)
+    MAX_ELEMENTS: 500,
+    // Reduced to avoid token limits
+    MAX_TEXT_LENGTH: 100,
+    // Reduced for token efficiency
+    SKIP_HIDDEN_ELEMENTS: true,
+    // Skip hidden elements to reduce size
+    INCLUDE_FULL_HTML: false,
+    // Disabled by default - use tools instead
+    MAX_HTML_LENGTH: 2e4,
+    // Max characters for HTML snapshot (20KB) - much smaller
     IMPORTANT_TAGS: ["header", "nav", "main", "article", "section", "aside", "footer", "button", "input", "select", "textarea", "video", "canvas"]
   };
   var FEATURE_SCOPE_TYPES = {
@@ -583,6 +585,193 @@
   };
   var patchInjector = new PatchInjector();
 
+  // src/content/toolExecutor.ts
+  var ToolExecutor = class {
+    async executeTool(toolName, toolInput) {
+      try {
+        switch (toolName) {
+          case "search_dom":
+            return this.searchDOM(toolInput.selector);
+          case "read_element":
+            return this.readElement(toolInput.selector, toolInput.includeHTML);
+          case "get_page_structure":
+            return this.getPageStructure(toolInput.maxDepth, toolInput.rootSelector);
+          case "search_page_source":
+            return this.searchPageSource(toolInput.searchTerm, toolInput.maxResults);
+          case "read_page_source":
+            return this.readPageSource(toolInput.startLine, toolInput.endLine);
+          default:
+            return JSON.stringify({ error: `Unknown tool: ${toolName}` });
+        }
+      } catch (error) {
+        return JSON.stringify({ error: `Tool execution failed: ${error}` });
+      }
+    }
+    searchDOM(selector) {
+      try {
+        const elements = document.querySelectorAll(selector);
+        if (elements.length === 0) {
+          return JSON.stringify({
+            found: 0,
+            message: `No elements found matching selector: ${selector}`
+          });
+        }
+        const results = Array.from(elements).slice(0, 20).map((el, idx) => {
+          const element = el;
+          return {
+            index: idx,
+            tagName: element.tagName.toLowerCase(),
+            id: element.id || void 0,
+            className: element.className || void 0,
+            textContent: element.textContent?.trim().substring(0, 100) || void 0,
+            attributes: Array.from(element.attributes).reduce((acc, attr) => {
+              acc[attr.name] = attr.value;
+              return acc;
+            }, {})
+          };
+        });
+        return JSON.stringify({
+          found: elements.length,
+          showing: results.length,
+          elements: results
+        }, null, 2);
+      } catch (error) {
+        return JSON.stringify({ error: `Failed to search DOM: ${error}` });
+      }
+    }
+    readElement(selector, includeHTML) {
+      try {
+        const element = document.querySelector(selector);
+        if (!element) {
+          return JSON.stringify({ error: `Element not found: ${selector}` });
+        }
+        const computedStyle = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        const result = {
+          tagName: element.tagName.toLowerCase(),
+          id: element.id || void 0,
+          className: element.className || void 0,
+          textContent: element.textContent?.trim() || void 0,
+          attributes: Array.from(element.attributes).reduce((acc, attr) => {
+            acc[attr.name] = attr.value;
+            return acc;
+          }, {}),
+          position: {
+            top: rect.top,
+            left: rect.left,
+            width: rect.width,
+            height: rect.height
+          },
+          computedStyles: {
+            display: computedStyle.display,
+            position: computedStyle.position,
+            visibility: computedStyle.visibility,
+            backgroundColor: computedStyle.backgroundColor,
+            color: computedStyle.color,
+            fontSize: computedStyle.fontSize,
+            zIndex: computedStyle.zIndex
+          }
+        };
+        if (includeHTML) {
+          result.innerHTML = element.innerHTML.substring(0, 5e3);
+        }
+        return JSON.stringify(result, null, 2);
+      } catch (error) {
+        return JSON.stringify({ error: `Failed to read element: ${error}` });
+      }
+    }
+    getPageStructure(maxDepth, rootSelector) {
+      try {
+        const root = rootSelector ? document.querySelector(rootSelector) : document.body;
+        if (!root) {
+          return JSON.stringify({ error: "Root element not found" });
+        }
+        const depth = maxDepth || 3;
+        const buildTree = (element, currentDepth) => {
+          if (currentDepth > depth) return null;
+          const el = element;
+          const node = {
+            tag: el.tagName.toLowerCase(),
+            id: el.id || void 0,
+            class: el.className || void 0,
+            children: []
+          };
+          const children = Array.from(el.children).slice(0, 10);
+          for (const child of children) {
+            const childNode = buildTree(child, currentDepth + 1);
+            if (childNode) {
+              node.children.push(childNode);
+            }
+          }
+          if (node.children.length === 0) {
+            delete node.children;
+          }
+          return node;
+        };
+        const structure = buildTree(root, 0);
+        return JSON.stringify(structure, null, 2);
+      } catch (error) {
+        return JSON.stringify({ error: `Failed to get page structure: ${error}` });
+      }
+    }
+    searchPageSource(searchTerm, maxResults) {
+      try {
+        const htmlSource = document.documentElement.outerHTML;
+        const lines = htmlSource.split("\n");
+        const limit = maxResults || 20;
+        const results = [];
+        const searchRegex = new RegExp(searchTerm, "gi");
+        for (let i = 0; i < lines.length && results.length < limit; i++) {
+          if (searchRegex.test(lines[i])) {
+            const contextStart = Math.max(0, i - 2);
+            const contextEnd = Math.min(lines.length, i + 3);
+            const context = lines.slice(contextStart, contextEnd);
+            results.push({
+              lineNumber: i + 1,
+              line: lines[i].trim(),
+              context: context.map((line, idx) => {
+                const lineNum = contextStart + idx + 1;
+                const marker = lineNum === i + 1 ? "\u2192" : " ";
+                return `${marker} ${lineNum}: ${line}`;
+              })
+            });
+          }
+        }
+        return JSON.stringify({
+          searchTerm,
+          totalLines: lines.length,
+          matchesFound: results.length,
+          results
+        }, null, 2);
+      } catch (error) {
+        return JSON.stringify({ error: `Failed to search page source: ${error}` });
+      }
+    }
+    readPageSource(startLine, endLine) {
+      try {
+        const htmlSource = document.documentElement.outerHTML;
+        const lines = htmlSource.split("\n");
+        const start = startLine ? Math.max(1, startLine) - 1 : 0;
+        const end = endLine ? Math.min(lines.length, endLine) : Math.min(lines.length, start + 50);
+        const selectedLines = lines.slice(start, end);
+        const numberedLines = selectedLines.map((line, idx) => {
+          const lineNum = start + idx + 1;
+          return `${lineNum}: ${line}`;
+        });
+        return JSON.stringify({
+          totalLines: lines.length,
+          startLine: start + 1,
+          endLine: end,
+          linesShown: selectedLines.length,
+          source: numberedLines.join("\n")
+        }, null, 2);
+      } catch (error) {
+        return JSON.stringify({ error: `Failed to read page source: ${error}` });
+      }
+    }
+  };
+  var toolExecutor = new ToolExecutor();
+
   // src/content/contentScript.ts
   var ContentScript = class {
     constructor() {
@@ -664,6 +853,8 @@
             return this.handleStorageChanged(message.changes);
           case "APPLY_CUSTOM_FEATURE":
             return await this.handleApplyCustomFeature(message.featureId);
+          case MESSAGE_TYPES.EXECUTE_TOOL:
+            return await this.handleExecuteTool(message.toolName, message.toolInput);
           default:
             console.warn("Web Augmenter: Unknown message type:", message.type);
             return void 0;
@@ -937,6 +1128,22 @@
           return button;
         }
       };
+    }
+    async handleExecuteTool(toolName, toolInput) {
+      try {
+        console.log(`Web Augmenter: Executing tool: ${toolName}`, toolInput);
+        const result = await toolExecutor.executeTool(toolName, toolInput);
+        return {
+          type: MESSAGE_TYPES.TOOL_RESULT,
+          result
+        };
+      } catch (error) {
+        console.error("Web Augmenter: Tool execution error:", error);
+        return {
+          type: MESSAGE_TYPES.TOOL_RESULT,
+          result: JSON.stringify({ error: `Tool execution failed: ${error}` })
+        };
+      }
     }
     showNotification(message, type = "info") {
       const notification = document.createElement("div");

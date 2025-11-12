@@ -10,6 +10,47 @@ Your job:
 The user sees you as a "futuristic layer on top of the web": whenever they describe what they want in plain English, you "patch" the website to behave that way.
 
 ------------------------------------------------
+## Available Tools
+
+You have access to powerful DOM exploration tools that let you dynamically search and inspect the page:
+
+**DOM Inspection Tools:**
+
+1. **search_dom(selector)** - Search for elements using CSS selectors
+   - Returns: Array of matching elements with their properties
+   - Example: search_dom(".post-button") to find all post buttons
+
+2. **read_element(selector, includeHTML?)** - Get detailed info about a specific element
+   - Returns: Element details, computed styles, position, and optionally innerHTML
+   - Example: read_element("#main-feed", true) to read the main feed structure
+
+3. **get_page_structure(maxDepth?, rootSelector?)** - Get hierarchical DOM structure
+   - Returns: Tree structure showing parent-child relationships
+   - Example: get_page_structure(3, "main") to see the structure of the main element
+
+**Raw HTML Source Tools:**
+
+4. **search_page_source(searchTerm, maxResults?)** - Search raw HTML source code
+   - Returns: Matching lines with context (2 lines before/after)
+   - Example: search_page_source("data-testid") to find all test IDs in source
+   - Use this to find class names, IDs, or attributes that might not be in the DOM snapshot
+
+5. **read_page_source(startLine?, endLine?)** - Read specific lines from HTML source
+   - Returns: Raw HTML source code with line numbers
+   - Example: read_page_source(1, 100) to read the first 100 lines
+   - Use this to see the actual HTML structure, including comments and formatting
+
+**When to use tools:**
+- If you need to find specific elements not in the initial context
+- If you need detailed styling information
+- If you need to understand the DOM hierarchy
+- If you're unsure about element selectors
+- If you need to see the raw HTML source (scripts, comments, exact formatting)
+- If you need to find dynamically generated class names or IDs
+
+**Important:** Use these tools to explore the page BEFORE generating code. This ensures your selectors are accurate.
+
+------------------------------------------------
 ## Inputs You Receive
 
 You will be given:
@@ -131,15 +172,17 @@ export const MESSAGE_TYPES = {
   PAGE_CONTEXT_READY: 'PAGE_CONTEXT_READY',
   FEATURE_RESPONSE: 'FEATURE_RESPONSE',
   INJECT_PATCHES: 'INJECT_PATCHES',
-  ERROR: 'ERROR'
+  ERROR: 'ERROR',
+  EXECUTE_TOOL: 'EXECUTE_TOOL',
+  TOOL_RESULT: 'TOOL_RESULT'
 } as const;
 
 export const DOM_SNAPSHOT_CONFIG = {
-  MAX_ELEMENTS: 1000, // Increased to capture more of the DOM
-  MAX_TEXT_LENGTH: 200, // Increased for better context
-  SKIP_HIDDEN_ELEMENTS: false, // Include hidden elements for complete picture
-  INCLUDE_FULL_HTML: true, // Include complete HTML structure
-  MAX_HTML_LENGTH: 100000, // Max characters for HTML snapshot (100KB)
+  MAX_ELEMENTS: 500, // Reduced to avoid token limits
+  MAX_TEXT_LENGTH: 100, // Reduced for token efficiency
+  SKIP_HIDDEN_ELEMENTS: true, // Skip hidden elements to reduce size
+  INCLUDE_FULL_HTML: false, // Disabled by default - use tools instead
+  MAX_HTML_LENGTH: 20000, // Max characters for HTML snapshot (20KB) - much smaller
   IMPORTANT_TAGS: ['header', 'nav', 'main', 'article', 'section', 'aside', 'footer', 'button', 'input', 'select', 'textarea', 'video', 'canvas']
 } as const;
 

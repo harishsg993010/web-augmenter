@@ -120,13 +120,13 @@ class BackgroundService {
       // Update LLM client config if needed
       await this.updateLLMClientConfig();
 
-      // Call the LLM
+      // Call the LLM with tabId for tool execution
       const response = await llmClient.callWebFeatureBuilder({
         systemPrompt: '', // This is handled in the llmClient
         userInstruction: pageContext.userInstruction,
         pageContext,
         screenshotBase64
-      });
+      }, sender.tab?.id);
 
       // Send patches to content script for injection
       // Content script uses blob URLs to bypass CSP restrictions

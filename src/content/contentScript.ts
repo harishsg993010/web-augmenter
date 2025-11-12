@@ -9,6 +9,7 @@ import { MESSAGE_TYPES } from '../shared/constants.js';
 import { domSnapshotGenerator } from '../shared/domSnapshot.js';
 import { persistence } from '../shared/persistence.js';
 import { patchInjector } from './injectPatches.js';
+import { toolExecutor } from './toolExecutor.js';
 
 class ContentScript {
   private isReady = false;
@@ -120,6 +121,9 @@ class ContentScript {
 
         case 'APPLY_CUSTOM_FEATURE':
           return await this.handleApplyCustomFeature(message.featureId);
+
+        case MESSAGE_TYPES.EXECUTE_TOOL:
+          return await this.handleExecuteTool(message.toolName, message.toolInput);
 
         default:
           console.warn('Web Augmenter: Unknown message type:', message.type);
@@ -462,6 +466,24 @@ class ContentScript {
         return button;
       }
     };
+  }
+
+  private async handleExecuteTool(toolName: string, toolInput: any): Promise<any> {
+    try {
+      console.log(`Web Augmenter: Executing tool: ${toolName}`, toolInput);
+      const result = await toolExecutor.executeTool(toolName, toolInput);
+      
+      return {
+        type: MESSAGE_TYPES.TOOL_RESULT,
+        result
+      };
+    } catch (error) {
+      console.error('Web Augmenter: Tool execution error:', error);
+      return {
+        type: MESSAGE_TYPES.TOOL_RESULT,
+        result: JSON.stringify({ error: `Tool execution failed: ${error}` })
+      };
+    }
   }
 
   private showNotification(message: string, type: 'success' | 'error' | 'info' = 'info'): void {
