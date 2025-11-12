@@ -1,0 +1,412 @@
+import {
+  MessageFromContent,
+  MessageFromBackground,
+  MessageToContent,
+  WebFeatureResponse,
+  PageContext
+} from '../shared/types.js';
+import { MESSAGE_TYPES } from '../shared/constants.js';
+import { llmClient } from '../shared/llmClient.js';
+import { screenshotCapture } from '../shared/screenshot.js';
+import { persistence } from '../shared/persistence.js';
+
+class BackgroundService {
+  private userScriptsAvailable: boolean = false;
+
+  constructor() {
+    this.checkUserScriptsAvailability();
+    this.setupMessageListeners();
+    this.setupContextMenus();
+    this.setupStorageListener();
+  }
+
+  private async checkUserScriptsAvailability(): Promise<void> {
+    try {
+      // Check if userScripts API is available (Chrome 120+)
+      if (typeof chrome.userScripts !== 'undefined') {
+        await chrome.userScripts.getScripts();
+        this.userScriptsAvailable = true;
+        console.log('Web Augmenter: userScripts API available');
+      }
+    } catch (error) {
+      this.userScriptsAvailable = false;
+      console.log('Web Augmenter: userScripts API not available, using fallback methods');
+    }
+  }
+
+  private setupMessageListeners(): void {
+    chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      this.handleMessage(message, sender)
+        .then(response => {
+          if (response) {
+            sendResponse(response);
+          }
+        })
+        .catch(error => {
+          console.error('Error handling message:', error);
+          sendResponse({
+            type: MESSAGE_TYPES.ERROR,
+            error: error.message || 'Unknown error'
+          });
+        });
+
+      // Return true to indicate async response
+      return true;
+    });
+  }
+
+  private async handleMessage(
+    message: any,
+    sender: chrome.runtime.MessageSender
+  ): Promise<MessageFromBackground | void> {
+    try {
+      switch (message.type) {
+        case MESSAGE_TYPES.PAGE_CONTEXT_READY:
+          return await this.handlePageContext(message as MessageFromContent, sender);
+
+        case 'GET_SCREENSHOT':
+          return await this.handleGetScreenshot(message);
+
+        case 'SAVE_CUSTOM_FEATURE':
+          return await this.handleSaveCustomFeature(message);
+
+        case 'GET_CUSTOM_FEATURES':
+          return await this.handleGetCustomFeatures(message);
+
+        case 'DELETE_CUSTOM_FEATURE':
+          return await this.handleDeleteCustomFeature(message);
+
+        case 'TOGGLE_FEATURE_AUTO_APPLY':
+          return await this.handleToggleFeatureAutoApply(message);
+
+        case 'UPDATE_GLOBAL_SETTINGS':
+          return await this.handleUpdateGlobalSettings(message);
+
+        case 'GET_SITE_STATUS':
+          return await this.handleGetSiteStatus(message);
+
+        case 'TOGGLE_SITE_DISABLED':
+          return await this.handleToggleSiteDisabled(message);
+
+        case 'INJECT_SCRIPT_VIA_API':
+          return await this.handleInjectScriptViaAPI(message, sender);
+
+        default:
+          console.warn('Unknown message type:', message.type);
+          return undefined;
+      }
+    } catch (error) {
+      console.error('Error in message handler:', error);
+      return {
+        type: MESSAGE_TYPES.ERROR,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  private async handlePageContext(
+    message: MessageFromContent,
+    sender: chrome.runtime.MessageSender
+  ): Promise<MessageFromBackground> {
+    try {
+      const { pageContext } = message;
+
+      // Get screenshot if requested
+      let screenshotBase64: string | undefined;
+      if (message.includeScreenshot) {
+        screenshotBase64 = await screenshotCapture.captureWithRetry() || undefined;
+      }
+
+      // Update LLM client config if needed
+      await this.updateLLMClientConfig();
+
+      // Call the LLM
+      const response = await llmClient.callWebFeatureBuilder({
+        systemPrompt: '', // This is handled in the llmClient
+        userInstruction: pageContext.userInstruction,
+        pageContext,
+        screenshotBase64
+      });
+
+      // Send patches to content script for injection
+      // Content script uses blob URLs to bypass CSP restrictions
+      if (sender.tab?.id) {
+        chrome.tabs.sendMessage(sender.tab.id, {
+          type: MESSAGE_TYPES.INJECT_PATCHES,
+          patches: response
+        } as MessageToContent);
+      }
+
+      return {
+        type: MESSAGE_TYPES.FEATURE_RESPONSE,
+        response
+      };
+
+    } catch (error) {
+      console.error('Error processing page context:', error);
+      return {
+        type: MESSAGE_TYPES.ERROR,
+        error: error instanceof Error ? error.message : 'Failed to process request'
+      };
+    }
+  }
+
+  private async handleGetScreenshot(message: any): Promise<any> {
+    try {
+      const screenshot = await screenshotCapture.captureWithRetry(message.options || {});
+      return {
+        type: 'SCREENSHOT_RESPONSE',
+        screenshot
+      };
+    } catch (error) {
+      return {
+        type: MESSAGE_TYPES.ERROR,
+        error: error instanceof Error ? error.message : 'Screenshot failed'
+      };
+    }
+  }
+
+  private async handleSaveCustomFeature(message: any): Promise<any> {
+    try {
+      const feature = message.feature;
+      await persistence.saveCustomFeature(feature);
+
+      return {
+        type: 'FEATURE_SAVED',
+        feature
+      };
+    } catch (error) {
+      return {
+        type: MESSAGE_TYPES.ERROR,
+        error: error instanceof Error ? error.message : 'Failed to save feature'
+      };
+    }
+  }
+
+  private async handleGetCustomFeatures(message: any): Promise<any> {
+    try {
+      const features = await persistence.getAllCustomFeatures();
+
+      return {
+        type: 'CUSTOM_FEATURES_RESPONSE',
+        features
+      };
+    } catch (error) {
+      return {
+        type: MESSAGE_TYPES.ERROR,
+        error: error instanceof Error ? error.message : 'Failed to get features'
+      };
+    }
+  }
+
+  private async handleDeleteCustomFeature(message: any): Promise<any> {
+    try {
+      await persistence.deleteCustomFeature(message.featureId);
+
+      return {
+        type: 'FEATURE_DELETED',
+        featureId: message.featureId
+      };
+    } catch (error) {
+      return {
+        type: MESSAGE_TYPES.ERROR,
+        error: error instanceof Error ? error.message : 'Failed to delete feature'
+      };
+    }
+  }
+
+  private async handleToggleFeatureAutoApply(message: any): Promise<any> {
+    try {
+      const { featureId, hostname, enabled } = message;
+      await persistence.setAutoApply(featureId, hostname, enabled);
+
+      return {
+        type: 'AUTO_APPLY_TOGGLED',
+        featureId,
+        hostname,
+        enabled
+      };
+    } catch (error) {
+      return {
+        type: MESSAGE_TYPES.ERROR,
+        error: error instanceof Error ? error.message : 'Failed to toggle auto-apply'
+      };
+    }
+  }
+
+  private async handleUpdateGlobalSettings(message: any): Promise<any> {
+    try {
+      await persistence.updateGlobalSettings(message.settings);
+
+      return {
+        type: 'SETTINGS_UPDATED',
+        settings: message.settings
+      };
+    } catch (error) {
+      return {
+        type: MESSAGE_TYPES.ERROR,
+        error: error instanceof Error ? error.message : 'Failed to update settings'
+      };
+    }
+  }
+
+  private async handleGetSiteStatus(message: any): Promise<any> {
+    try {
+      const { hostname } = message;
+      const disabled = await persistence.isSiteDisabled(hostname);
+      const features = await persistence.getFeaturesForSite(`https://${hostname}`);
+
+      return {
+        type: 'SITE_STATUS_RESPONSE',
+        hostname,
+        disabled,
+        appliedFeatures: features
+      };
+    } catch (error) {
+      return {
+        type: MESSAGE_TYPES.ERROR,
+        error: error instanceof Error ? error.message : 'Failed to get site status'
+      };
+    }
+  }
+
+  private async handleToggleSiteDisabled(message: any): Promise<any> {
+    try {
+      const { hostname, disabled } = message;
+      await persistence.setSiteDisabled(hostname, disabled);
+
+      return {
+        type: 'SITE_DISABLED_TOGGLED',
+        hostname,
+        disabled
+      };
+    } catch (error) {
+      return {
+        type: MESSAGE_TYPES.ERROR,
+        error: error instanceof Error ? error.message : 'Failed to toggle site'
+      };
+    }
+  }
+
+  private async handleInjectScriptViaAPI(message: any, sender: chrome.runtime.MessageSender): Promise<any> {
+    try {
+      const { script, id } = message;
+      
+      if (!sender.tab?.id) {
+        throw new Error('No tab ID available');
+      }
+
+      const tabId = sender.tab.id;
+
+      // Use chrome.userScripts API (Chrome 120+)
+      // USER_SCRIPT world is CSP-exempt by design!
+      if (!this.userScriptsAvailable) {
+        throw new Error('userScripts API not available. Enable "Developer mode" (Chrome <138) or "Allow User Scripts" toggle (Chrome 138+)');
+      }
+
+      try {
+        await (chrome.userScripts as any).execute({
+          target: { tabId },
+          world: 'USER_SCRIPT',
+          js: [{ code: script }],
+          injectImmediately: true
+        });
+
+        console.log('Web Augmenter: Script injected via userScripts API (CSP-exempt)', { id });
+        return {
+          success: true,
+          id,
+          method: 'userScripts'
+        };
+      } catch (userScriptError) {
+        console.error('Web Augmenter: userScripts API failed:', userScriptError);
+        throw userScriptError;
+      }
+    } catch (error) {
+      console.error('Web Augmenter: Script injection failed:', error);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
+    }
+  }
+
+  private async updateLLMClientConfig(): Promise<void> {
+    try {
+      const data = await persistence.getStorageData();
+      const settings = data.globalSettings;
+
+      if (settings.apiKey) {
+        llmClient.updateConfig({
+          apiKey: settings.apiKey
+        });
+      }
+    } catch (error) {
+      console.warn('Failed to update LLM client config:', error);
+    }
+  }
+
+  private setupContextMenus(): void {
+    chrome.runtime.onInstalled.addListener(() => {
+      chrome.contextMenus.create({
+        id: 'web-augmenter-enhance',
+        title: 'Enhance this page with Web Augmenter',
+        contexts: ['page']
+      });
+    });
+
+    chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+      if (info.menuItemId === 'web-augmenter-enhance' && tab?.id) {
+        // Open popup or send message to content script
+        try {
+          chrome.tabs.sendMessage(tab.id, {
+            type: 'CONTEXT_MENU_CLICKED'
+          });
+        } catch (error) {
+          console.warn('Could not send context menu message:', error);
+        }
+      }
+    });
+  }
+
+  private setupStorageListener(): void {
+    chrome.storage.onChanged.addListener((changes, areaName) => {
+      if (areaName === 'local') {
+        // Broadcast storage changes to content scripts
+        chrome.tabs.query({}, (tabs) => {
+          tabs.forEach(tab => {
+            if (tab.id) {
+              chrome.tabs.sendMessage(tab.id, {
+                type: 'STORAGE_CHANGED',
+                changes
+              }).catch(() => {
+                // Ignore errors for tabs that don't have content scripts
+              });
+            }
+          });
+        });
+      }
+    });
+  }
+}
+
+// Initialize the background service
+new BackgroundService();
+
+// Handle extension lifecycle
+chrome.runtime.onInstalled.addListener((details) => {
+  if (details.reason === 'install') {
+    console.log('Web Augmenter installed');
+
+    // Initialize default settings
+    persistence.updateGlobalSettings({
+      includeScreenshotByDefault: true
+    }).catch(console.error);
+  }
+});
+
+// Keep service worker alive
+chrome.runtime.onMessage.addListener(() => {
+  // This listener helps keep the service worker alive
+  return false;
+});

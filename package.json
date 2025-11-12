@@ -1,0 +1,25 @@
+{
+  "name": "web-augmenter",
+  "version": "0.1.0",
+  "description": "Turn any website into a programmable surface using natural language",
+  "scripts": {
+    "build": "node esbuild.config.js && node build.js",
+    "build:watch": "node esbuild.config.js --watch",
+    "clean": "rm -rf dist",
+    "dev": "npm run clean && npm run build && npm run build:watch",
+    "package": "npm run clean && npm run build && cd dist && zip -r ../web-augmenter.zip ."
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.246",
+    "esbuild": "^0.27.0",
+    "typescript": "^5.9.3"
+  },
+  "private": true,
+  "main": "build.js",
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.68.0"
+  }
+}

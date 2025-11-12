@@ -1,0 +1,485 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    width: 400px;
+    min-height: 500px;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.4;
+    color: #333;
+    background: #f8f9fa;
+}
+
+.header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 16px;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.header h1 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 8px;
+}
+
+.site-info {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    opacity: 0.9;
+}
+
+#currentSite {
+    font-weight: 500;
+    max-width: 280px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.toggle-btn {
+    background: none;
+    border: none;
+    color: white;
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 3px;
+    transition: background 0.2s;
+}
+
+.toggle-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+#siteStatus.enabled {
+    color: #4CAF50;
+}
+
+#siteStatus.disabled {
+    color: #f44336;
+}
+
+.main-content {
+    padding: 16px;
+    max-height: 450px;
+    overflow-y: auto;
+}
+
+.section {
+    margin-bottom: 20px;
+    background: white;
+    border-radius: 8px;
+    padding: 16px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.section-header.clickable {
+    cursor: pointer;
+    user-select: none;
+}
+
+.section-header h3 {
+    font-size: 16px;
+    font-weight: 600;
+    color: #333;
+}
+
+.expand-icon {
+    transition: transform 0.2s;
+}
+
+.expand-icon.expanded {
+    transform: rotate(180deg);
+}
+
+.icon-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 14px;
+    transition: background 0.2s;
+}
+
+.icon-btn:hover {
+    background: #f0f0f0;
+}
+
+label {
+    display: block;
+    margin-bottom: 6px;
+    font-weight: 500;
+    color: #555;
+}
+
+textarea, input[type="text"], input[type="password"], select {
+    width: 100%;
+    padding: 10px;
+    border: 2px solid #e0e0e0;
+    border-radius: 6px;
+    font-size: 14px;
+    transition: border-color 0.2s;
+    font-family: inherit;
+    resize: vertical;
+}
+
+textarea:focus, input:focus, select:focus {
+    outline: none;
+    border-color: #667eea;
+}
+
+textarea {
+    min-height: 80px;
+}
+
+.options {
+    margin: 12px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.checkbox-label {
+    display: flex;
+    align-items: center;
+    font-weight: normal;
+    margin-bottom: 0;
+    cursor: pointer;
+}
+
+.checkbox-label input[type="checkbox"] {
+    width: auto;
+    margin-right: 8px;
+}
+
+.button-group {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.primary-btn {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    padding: 12px 24px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+}
+
+.primary-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+}
+
+.primary-btn:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+}
+
+.secondary-btn {
+    background: #fff;
+    color: #667eea;
+    border: 2px solid #667eea;
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.secondary-btn:hover {
+    background: #667eea;
+    color: white;
+}
+
+.tertiary-btn {
+    background: none;
+    color: #666;
+    border: 1px solid #ddd;
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.tertiary-btn:hover {
+    background: #f5f5f5;
+}
+
+.danger-btn {
+    background: #f44336;
+    color: white;
+    border: none;
+    padding: 10px 16px;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.danger-btn:hover {
+    background: #d32f2f;
+}
+
+.spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid transparent;
+    border-top: 2px solid currentColor;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.status {
+    margin-top: 12px;
+    padding: 10px;
+    border-radius: 6px;
+    font-size: 13px;
+}
+
+.status.success {
+    background: #e8f5e8;
+    color: #2e7d2e;
+    border: 1px solid #4caf50;
+}
+
+.status.error {
+    background: #ffeaea;
+    color: #c62828;
+    border: 1px solid #f44336;
+}
+
+.status.info {
+    background: #e3f2fd;
+    color: #1976d2;
+    border: 1px solid #2196f3;
+}
+
+.features-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.feature-item {
+    background: #f8f9fa;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 8px;
+    transition: border-color 0.2s;
+}
+
+.feature-item:hover {
+    border-color: #667eea;
+}
+
+.feature-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+
+.feature-name {
+    font-weight: 600;
+    color: #333;
+    font-size: 14px;
+}
+
+.feature-scope {
+    font-size: 12px;
+    background: #e0e7ff;
+    color: #4338ca;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.feature-description {
+    font-size: 12px;
+    color: #666;
+    margin-bottom: 8px;
+    line-height: 1.3;
+}
+
+.feature-actions {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+}
+
+.feature-btn {
+    background: none;
+    border: none;
+    color: #667eea;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+
+.feature-btn:hover {
+    background: #e0e7ff;
+}
+
+.feature-btn.danger {
+    color: #f44336;
+}
+
+.feature-btn.danger:hover {
+    background: #ffeaea;
+}
+
+.auto-apply-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    color: #666;
+}
+
+.auto-apply-toggle input[type="checkbox"] {
+    width: auto;
+    margin: 0;
+}
+
+.quick-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.quick-actions button {
+    flex: 1;
+    min-width: 120px;
+}
+
+.setting-item {
+    margin-bottom: 12px;
+}
+
+.setting-item label {
+    margin-bottom: 4px;
+}
+
+.setting-item small {
+  display: block;
+  color: #666;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.setting-item small a {
+  color: #667eea;
+  text-decoration: none;
+}
+
+.setting-item small a:hover {
+  text-decoration: underline;
+}
+
+.loading, .no-items {
+    text-align: center;
+    color: #666;
+    font-style: italic;
+    padding: 20px;
+}
+
+.footer {
+    background: #f0f0f0;
+    padding: 12px 16px;
+    border-top: 1px solid #e0e0e0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    color: #666;
+}
+
+.version {
+    font-weight: 500;
+}
+
+.links {
+    display: flex;
+    gap: 12px;
+}
+
+.links a {
+    color: #667eea;
+    text-decoration: none;
+    transition: color 0.2s;
+}
+
+.links a:hover {
+    color: #5a67d8;
+}
+
+.hidden {
+    display: none !important;
+}
+
+/* Scrollbar styling */
+.main-content::-webkit-scrollbar,
+.features-list::-webkit-scrollbar {
+    width: 6px;
+}
+
+.main-content::-webkit-scrollbar-track,
+.features-list::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 3px;
+}
+
+.main-content::-webkit-scrollbar-thumb,
+.features-list::-webkit-scrollbar-thumb {
+    background: #c1c1c1;
+    border-radius: 3px;
+}
+
+.main-content::-webkit-scrollbar-thumb:hover,
+.features-list::-webkit-scrollbar-thumb:hover {
+    background: #a8a8a8;
+}
+
+/* Responsive adjustments */
+@media (max-height: 600px) {
+    .main-content {
+        max-height: 350px;
+    }
+
+    .features-list {
+        max-height: 120px;
+    }
+}

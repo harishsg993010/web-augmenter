@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Augmenter</title>
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <div class="header">
+        <h1>🪄 Web Augmenter</h1>
+        <div class="site-info">
+            <span id="currentSite">Loading...</span>
+            <button id="toggleSite" class="toggle-btn" title="Enable/Disable for this site">
+                <span id="siteStatus">●</span>
+            </button>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <!-- Primary instruction section -->
+        <div class="section">
+            <label for="instruction">What would you like to do?</label>
+            <textarea id="instruction"
+                      placeholder="e.g., 'Hide sidebar and focus on main content' or 'Add dark mode toggle'"
+                      rows="3"></textarea>
+
+            <div class="options">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="includeScreenshot" checked>
+                    Include screenshot context
+                </label>
+
+                <label class="checkbox-label">
+                    <input type="checkbox" id="saveAsFeature">
+                    Save as custom feature
+                </label>
+            </div>
+
+            <button id="executeBtn" class="primary-btn">
+                <span id="executeText">Apply Changes</span>
+                <div id="executeSpinner" class="spinner hidden"></div>
+            </button>
+
+            <div id="status" class="status hidden"></div>
+        </div>
+
+        <!-- Custom feature save section -->
+        <div id="featureSaveSection" class="section hidden">
+            <h3>Save as Custom Feature</h3>
+            <input type="text" id="featureName" placeholder="Feature name (e.g., 'Reading Mode')">
+
+            <label for="featureScope">Apply to:</label>
+            <select id="featureScope">
+                <option value="hostname">This site only</option>
+                <option value="domain">All subdomains</option>
+                <option value="global">All sites</option>
+                <option value="urlPattern">Custom URL pattern</option>
+            </select>
+
+            <input type="text" id="urlPattern" placeholder="URL pattern (regex)" class="hidden">
+
+            <textarea id="featureDescription"
+                      placeholder="Description (optional)"
+                      rows="2"></textarea>
+
+            <div class="button-group">
+                <button id="saveFeatureBtn" class="secondary-btn">Save Feature</button>
+                <button id="cancelSaveBtn" class="tertiary-btn">Cancel</button>
+            </div>
+        </div>
+
+        <!-- Custom features list -->
+        <div class="section">
+            <div class="section-header">
+                <h3>Custom Features</h3>
+                <button id="refreshFeatures" class="icon-btn" title="Refresh">⟳</button>
+            </div>
+
+            <div id="featuresList" class="features-list">
+                <div id="featuresLoading" class="loading">Loading features...</div>
+                <div id="noFeatures" class="no-items hidden">
+                    No custom features yet. Create one by using the form above!
+                </div>
+            </div>
+        </div>
+
+        <!-- Quick actions -->
+        <div class="section">
+            <h3>Quick Actions</h3>
+            <div class="quick-actions">
+                <button id="removeAllBtn" class="danger-btn">Remove All Features</button>
+                <button id="screenshotBtn" class="secondary-btn">Test Screenshot</button>
+            </div>
+        </div>
+
+        <!-- Settings -->
+        <div class="section collapsible">
+            <div class="section-header clickable" id="settingsToggle">
+                <h3>Settings</h3>
+                <span class="expand-icon">▼</span>
+            </div>
+
+            <div id="settingsContent" class="hidden">
+                <div class="setting-item">
+                    <label for="apiKey">Anthropic API Key:</label>
+                    <input type="password" id="apiKey"
+                           placeholder="sk-ant-..."
+                           title="Your Anthropic API key from https://console.anthropic.com/">
+                    <small>Get your API key from <a href="https://console.anthropic.com/" target="_blank">console.anthropic.com</a></small>
+                </div>
+
+                <div class="setting-item">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="screenshotDefault">
+                        Include screenshot by default
+                    </label>
+                </div>
+
+                <div class="button-group">
+                    <button id="saveSettingsBtn" class="secondary-btn">Save Settings</button>
+                    <button id="exportBtn" class="tertiary-btn">Export Data</button>
+                    <button id="importBtn" class="tertiary-btn">Import Data</button>
+                </div>
+                <input type="file" id="importFile" accept=".json" style="display: none;">
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <div class="version">v0.1.0</div>
+        <div class="links">
+            <a href="#" id="helpLink">Help</a>
+            <a href="#" id="feedbackLink">Feedback</a>
+        </div>
+    </div>
+
+    <script type="module" src="popup.js"></script>
+</body>
+</html>
