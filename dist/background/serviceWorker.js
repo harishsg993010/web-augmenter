@@ -4597,7 +4597,7 @@ var LLMClient = class {
   }
   buildMessages(userInstruction, pageContext, screenshotBase64) {
     const content = [];
-    const textContent = `Please analyze this web page and implement the user's request.
+    let textContent = `Please analyze this web page and implement the user's request.
 
 User Request: "${userInstruction}"
 
@@ -4607,8 +4607,17 @@ Page Context:
 - Title: ${pageContext.domSummary.title}
 - DOM Elements: ${pageContext.domSummary.elements.length} key elements detected
 
-Key Page Elements:
-${pageContext.domSummary.elements.slice(0, 50).map((el) => {
+`;
+    if (pageContext.domSummary.fullHTML) {
+      textContent += `Complete HTML Structure:
+\`\`\`html
+${pageContext.domSummary.fullHTML}
+\`\`\`
+
+`;
+    }
+    textContent += `Key Page Elements (Summary):
+${pageContext.domSummary.elements.slice(0, 100).map((el) => {
       const parts = [];
       if (el.tagName) parts.push(`<${el.tagName}>`);
       if (el.id) parts.push(`id="${el.id}"`);

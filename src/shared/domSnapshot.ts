@@ -8,13 +8,60 @@ export class DOMSnapshotGenerator {
     const title = document.title;
 
     const elements = this.collectImportantElements();
+    const fullHTML = this.captureFullHTML();
 
     return {
       url,
       hostname,
       title,
-      elements
+      elements,
+      fullHTML
     };
+  }
+
+  private captureFullHTML(): string | undefined {
+    if (!DOM_SNAPSHOT_CONFIG.INCLUDE_FULL_HTML) {
+      return undefined;
+    }
+
+    try {
+      // Get the complete HTML
+      let html = document.documentElement.outerHTML;
+
+      // Clean up the HTML
+      html = this.cleanHTML(html);
+
+      // Truncate if too long
+      if (html.length > DOM_SNAPSHOT_CONFIG.MAX_HTML_LENGTH) {
+        console.warn(`HTML snapshot truncated from ${html.length} to ${DOM_SNAPSHOT_CONFIG.MAX_HTML_LENGTH} characters`);
+        html = html.substring(0, DOM_SNAPSHOT_CONFIG.MAX_HTML_LENGTH) + '\n<!-- ... HTML truncated ... -->';
+      }
+
+      return html;
+    } catch (error) {
+      console.error('Failed to capture full HTML:', error);
+      return undefined;
+    }
+  }
+
+  private cleanHTML(html: string): string {
+    // Remove script tags content (keep structure but remove code)
+    html = html.replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gi, '<script>/* script removed */</script>');
+    
+    // Remove inline event handlers
+    html = html.replace(/\s+on\w+="[^"]*"/gi, '');
+    html = html.replace(/\s+on\w+='[^']*'/gi, '');
+    
+    // Remove style tags content (keep structure)
+    html = html.replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gi, '<style>/* styles removed */</style>');
+    
+    // Remove inline styles (optional - comment out if you want to keep them)
+    // html = html.replace(/\s+style="[^"]*"/gi, '');
+    
+    // Remove comments
+    html = html.replace(/<!--[\s\S]*?-->/g, '');
+    
+    return html;
   }
 
   private collectImportantElements(): DOMElementInfo[] {

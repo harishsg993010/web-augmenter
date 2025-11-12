@@ -69,8 +69,8 @@ class LLMClient {
   private buildMessages(userInstruction: string, pageContext: PageContext, screenshotBase64?: string): Anthropic.MessageParam[] {
     const content: Anthropic.MessageParam['content'] = [];
 
-    // Add the main text content
-    const textContent = `Please analyze this web page and implement the user's request.
+    // Build the text content with full HTML if available
+    let textContent = `Please analyze this web page and implement the user's request.
 
 User Request: "${userInstruction}"
 
@@ -80,8 +80,21 @@ Page Context:
 - Title: ${pageContext.domSummary.title}
 - DOM Elements: ${pageContext.domSummary.elements.length} key elements detected
 
-Key Page Elements:
-${pageContext.domSummary.elements.slice(0, 50).map(el => {
+`;
+
+    // Add full HTML structure if available
+    if (pageContext.domSummary.fullHTML) {
+      textContent += `Complete HTML Structure:
+\`\`\`html
+${pageContext.domSummary.fullHTML}
+\`\`\`
+
+`;
+    }
+
+    // Add key elements summary
+    textContent += `Key Page Elements (Summary):
+${pageContext.domSummary.elements.slice(0, 100).map(el => {
   const parts = [];
   if (el.tagName) parts.push(`<${el.tagName}>`);
   if (el.id) parts.push(`id="${el.id}"`);

@@ -27,6 +27,7 @@ export interface DOMSnapshot {
   hostname: string;
   title: string;
   elements: DOMElementInfo[];
+  fullHTML?: string; // Complete HTML structure of the page
 }
 
 export interface DOMElementInfo {

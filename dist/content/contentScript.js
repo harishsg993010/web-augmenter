@@ -14,9 +14,16 @@
     ERROR: "ERROR"
   };
   var DOM_SNAPSHOT_CONFIG = {
-    MAX_ELEMENTS: 200,
-    MAX_TEXT_LENGTH: 100,
-    SKIP_HIDDEN_ELEMENTS: true,
+    MAX_ELEMENTS: 1e3,
+    // Increased to capture more of the DOM
+    MAX_TEXT_LENGTH: 200,
+    // Increased for better context
+    SKIP_HIDDEN_ELEMENTS: false,
+    // Include hidden elements for complete picture
+    INCLUDE_FULL_HTML: true,
+    // Include complete HTML structure
+    MAX_HTML_LENGTH: 1e5,
+    // Max characters for HTML snapshot (100KB)
     IMPORTANT_TAGS: ["header", "nav", "main", "article", "section", "aside", "footer", "button", "input", "select", "textarea", "video", "canvas"]
   };
   var FEATURE_SCOPE_TYPES = {
@@ -33,12 +40,39 @@
       const hostname = window.location.hostname;
       const title = document.title;
       const elements = this.collectImportantElements();
+      const fullHTML = this.captureFullHTML();
       return {
         url,
         hostname,
         title,
-        elements
+        elements,
+        fullHTML
       };
+    }
+    captureFullHTML() {
+      if (!DOM_SNAPSHOT_CONFIG.INCLUDE_FULL_HTML) {
+        return void 0;
+      }
+      try {
+        let html = document.documentElement.outerHTML;
+        html = this.cleanHTML(html);
+        if (html.length > DOM_SNAPSHOT_CONFIG.MAX_HTML_LENGTH) {
+          console.warn(`HTML snapshot truncated from ${html.length} to ${DOM_SNAPSHOT_CONFIG.MAX_HTML_LENGTH} characters`);
+          html = html.substring(0, DOM_SNAPSHOT_CONFIG.MAX_HTML_LENGTH) + "\n<!-- ... HTML truncated ... -->";
+        }
+        return html;
+      } catch (error) {
+        console.error("Failed to capture full HTML:", error);
+        return void 0;
+      }
+    }
+    cleanHTML(html) {
+      html = html.replace(/<script\b[^>]*>([\s\S]*?)<\/script>/gi, "<script>/* script removed */<\/script>");
+      html = html.replace(/\s+on\w+="[^"]*"/gi, "");
+      html = html.replace(/\s+on\w+='[^']*'/gi, "");
+      html = html.replace(/<style\b[^>]*>([\s\S]*?)<\/style>/gi, "<style>/* styles removed */</style>");
+      html = html.replace(/<!--[\s\S]*?-->/g, "");
+      return html;
     }
     collectImportantElements() {
       const elements = [];

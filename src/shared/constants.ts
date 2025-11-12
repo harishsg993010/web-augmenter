@@ -135,9 +135,11 @@ export const MESSAGE_TYPES = {
 } as const;
 
 export const DOM_SNAPSHOT_CONFIG = {
-  MAX_ELEMENTS: 200,
-  MAX_TEXT_LENGTH: 100,
-  SKIP_HIDDEN_ELEMENTS: true,
+  MAX_ELEMENTS: 1000, // Increased to capture more of the DOM
+  MAX_TEXT_LENGTH: 200, // Increased for better context
+  SKIP_HIDDEN_ELEMENTS: false, // Include hidden elements for complete picture
+  INCLUDE_FULL_HTML: true, // Include complete HTML structure
+  MAX_HTML_LENGTH: 100000, // Max characters for HTML snapshot (100KB)
   IMPORTANT_TAGS: ['header', 'nav', 'main', 'article', 'section', 'aside', 'footer', 'button', 'input', 'select', 'textarea', 'video', 'canvas']
 } as const;
 
