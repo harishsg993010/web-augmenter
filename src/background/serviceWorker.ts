@@ -128,6 +128,9 @@ class BackgroundService {
         screenshotBase64
       }, sender.tab?.id);
 
+      // Auto-save the generated feature for this hostname
+      await this.saveGeneratedFeature(pageContext, response);
+
       // Send patches to content script for injection
       // Content script uses blob URLs to bypass CSP restrictions
       if (sender.tab?.id) {
@@ -196,6 +199,41 @@ class BackgroundService {
         type: MESSAGE_TYPES.ERROR,
         error: error instanceof Error ? error.message : 'Failed to get features'
       };
+    }
+  }
+
+  private async saveGeneratedFeature(pageContext: any, response: any): Promise<void> {
+    try {
+      const hostname = pageContext.hostname;
+      const featureId = `auto_${hostname}_${Date.now()}`;
+      
+      // Create a custom feature from the generated response
+      const customFeature = {
+        id: featureId,
+        name: response.high_level_goal || 'Auto-generated feature',
+        scope: {
+          type: 'hostname' as const,
+          value: hostname
+        },
+        script: response.script || '',
+        css: response.css || '',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        autoApply: true, // Enable auto-apply by default
+        description: `Generated from: "${pageContext.userInstruction}"`,
+        tags: ['auto-generated']
+      };
+
+      // Save the feature
+      await persistence.saveCustomFeature(customFeature);
+      
+      // Enable auto-apply for this feature on this hostname
+      await persistence.setAutoApply(featureId, hostname, true);
+      
+      console.log(`Web Augmenter: Auto-saved feature "${customFeature.name}" for ${hostname}`);
+    } catch (error) {
+      console.error('Web Augmenter: Failed to auto-save feature:', error);
+      // Don't throw - we don't want to break the flow if save fails
     }
   }
 

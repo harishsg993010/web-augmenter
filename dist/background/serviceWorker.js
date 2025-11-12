@@ -5403,6 +5403,7 @@ var BackgroundService = class {
         pageContext,
         screenshotBase64
       }, sender.tab?.id);
+      await this.saveGeneratedFeature(pageContext, response);
       if (sender.tab?.id) {
         chrome.tabs.sendMessage(sender.tab.id, {
           type: MESSAGE_TYPES.INJECT_PATCHES,
@@ -5462,6 +5463,33 @@ var BackgroundService = class {
         type: MESSAGE_TYPES.ERROR,
         error: error instanceof Error ? error.message : "Failed to get features"
       };
+    }
+  }
+  async saveGeneratedFeature(pageContext, response) {
+    try {
+      const hostname = pageContext.hostname;
+      const featureId = `auto_${hostname}_${Date.now()}`;
+      const customFeature = {
+        id: featureId,
+        name: response.high_level_goal || "Auto-generated feature",
+        scope: {
+          type: "hostname",
+          value: hostname
+        },
+        script: response.script || "",
+        css: response.css || "",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        autoApply: true,
+        // Enable auto-apply by default
+        description: `Generated from: "${pageContext.userInstruction}"`,
+        tags: ["auto-generated"]
+      };
+      await persistence.saveCustomFeature(customFeature);
+      await persistence.setAutoApply(featureId, hostname, true);
+      console.log(`Web Augmenter: Auto-saved feature "${customFeature.name}" for ${hostname}`);
+    } catch (error) {
+      console.error("Web Augmenter: Failed to auto-save feature:", error);
     }
   }
   async handleDeleteCustomFeature(message) {
