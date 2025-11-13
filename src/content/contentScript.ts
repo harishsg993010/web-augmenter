@@ -3,7 +3,8 @@ import {
   MessageFromBackground,
   MessageToContent,
   PageContext,
-  CustomFeature
+  CustomFeature,
+  ElementInfo
 } from '../shared/types.js';
 import { MESSAGE_TYPES } from '../shared/constants.js';
 import { domSnapshotGenerator } from '../shared/domSnapshot.js';
@@ -15,6 +16,14 @@ class ContentScript {
   private isReady = false;
   private autoAppliedFeatures: Set<string> = new Set();
   private extensionContextValid = true;
+  private selectedElement: Element | null = null;
+  private highlightOverlay: HTMLElement | null = null;
+  private savedElements: Map<string, ElementInfo> = new Map();
+  private isPickerActive: boolean = false;
+  private isDrawing: boolean = false;
+  private drawStartX: number = 0;
+  private drawStartY: number = 0;
+  private selectionBox: HTMLElement | null = null;
 
   constructor() {
     this.init();
@@ -61,6 +70,9 @@ class ContentScript {
 
     // Set up mutation observer for dynamic content
     this.setupMutationObserver();
+
+    // Set up element tracking for context menu
+    this.setupElementTracking();
   }
 
   private setupMessageListeners(): void {
@@ -115,6 +127,9 @@ class ContentScript {
 
         case 'CONTEXT_MENU_CLICKED':
           return this.handleContextMenuClicked();
+
+        case 'ADD_ELEMENT_TO_AUGMENTER':
+          return this.handleAddElementToAugmenter(message.selectionText);
 
         case 'STORAGE_CHANGED':
           return this.handleStorageChanged(message.changes);
@@ -247,6 +262,472 @@ class ContentScript {
     }, '*');
   }
 
+  private async handleAddElementToAugmenter(selectionText?: string): Promise<void> {
+    try {
+      // Activate visual picker mode
+      this.activateElementPicker(selectionText);
+      
+    } catch (error) {
+      console.error('Web Augmenter: Failed to add element:', error);
+      this.showNotification('Failed to add element', 'error');
+    }
+  }
+
+  private activateElementPicker(selectionText?: string): void {
+    this.isPickerActive = true;
+    this.showNotification('📦 Draw a box around the element to select it. Press ESC to cancel.', 'info');
+    
+    // Create overlay to indicate picker mode
+    const pickerOverlay = document.createElement('div');
+    pickerOverlay.id = 'web-augmenter-picker-overlay';
+    pickerOverlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 999998;
+      cursor: crosshair;
+      background: rgba(0, 0, 0, 0.01);
+    `;
+    
+    // Mouse move handler - draw box
+    const handleMouseMove = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      if (this.isDrawing) {
+        // Update selection box
+        this.updateSelectionBox(e.clientX, e.clientY);
+      }
+    };
+    
+    // Mouse down handler - start drawing box
+    const handleMouseDown = (e: MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      this.isDrawing = true;
+      this.drawStartX = e.clientX;
+      this.drawStartY = e.clientY;
+      
+      // Create selection box
+      this.selectionBox = document.createElement('div');
+      this.selectionBox.id = 'web-augmenter-selection-box';
+      this.selectionBox.style.cssText = `
+        position: fixed;
+        border: 2px dashed #007cba;
+        background: rgba(0, 124, 186, 0.1);
+        pointer-events: none;
+        z-index: 999999;
+      `;
+      document.body.appendChild(this.selectionBox);
+    };
+    
+    // Mouse up handler - finish drawing and select element
+    const handleMouseUp = (e: MouseEvent) => {
+      if (this.isDrawing) {
+        e.preventDefault();
+        e.stopPropagation();
+        
+        this.isDrawing = false;
+        
+        // Find element that best fits the drawn box
+        const selectedElement = this.findElementInBox(
+          Math.min(this.drawStartX, e.clientX),
+          Math.min(this.drawStartY, e.clientY),
+          Math.abs(e.clientX - this.drawStartX),
+          Math.abs(e.clientY - this.drawStartY)
+        );
+        
+        // Clean up selection box
+        if (this.selectionBox) {
+          this.selectionBox.remove();
+          this.selectionBox = null;
+        }
+        
+        if (selectedElement) {
+          this.deactivateElementPicker(pickerOverlay, handleMouseMove, handleMouseDown, handleMouseUp, handleKeyDown);
+          this.selectElementForAugmentation(selectedElement, selectionText);
+        }
+      }
+    };
+    
+    
+    // Keyboard handler - ESC to cancel
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        this.deactivateElementPicker(pickerOverlay, handleMouseMove, handleMouseDown, handleMouseUp, handleKeyDown);
+        this.showNotification('Element picker cancelled', 'info');
+      }
+    };
+    
+    // Add event listeners
+    pickerOverlay.addEventListener('mousemove', handleMouseMove);
+    pickerOverlay.addEventListener('mousedown', handleMouseDown);
+    pickerOverlay.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('keydown', handleKeyDown);
+    
+    document.body.appendChild(pickerOverlay);
+  }
+
+  private deactivateElementPicker(
+    overlay: HTMLElement,
+    mouseMoveHandler: (e: MouseEvent) => void,
+    mouseDownHandler: (e: MouseEvent) => void,
+    mouseUpHandler: (e: MouseEvent) => void,
+    keyDownHandler: (e: KeyboardEvent) => void
+  ): void {
+    this.isPickerActive = false;
+    this.isDrawing = false;
+    
+    overlay.removeEventListener('mousemove', mouseMoveHandler);
+    overlay.removeEventListener('mousedown', mouseDownHandler);
+    overlay.removeEventListener('mouseup', mouseUpHandler);
+    document.removeEventListener('keydown', keyDownHandler);
+    overlay.remove();
+    
+    if (this.highlightOverlay) {
+      this.highlightOverlay.remove();
+      this.highlightOverlay = null;
+    }
+    
+    if (this.selectionBox) {
+      this.selectionBox.remove();
+      this.selectionBox = null;
+    }
+  }
+
+  private updateSelectionBox(currentX: number, currentY: number): void {
+    if (!this.selectionBox) return;
+    
+    const left = Math.min(this.drawStartX, currentX);
+    const top = Math.min(this.drawStartY, currentY);
+    const width = Math.abs(currentX - this.drawStartX);
+    const height = Math.abs(currentY - this.drawStartY);
+    
+    this.selectionBox.style.left = `${left}px`;
+    this.selectionBox.style.top = `${top}px`;
+    this.selectionBox.style.width = `${width}px`;
+    this.selectionBox.style.height = `${height}px`;
+  }
+
+  private findElementInBox(boxLeft: number, boxTop: number, boxWidth: number, boxHeight: number): Element | null {
+    const boxRight = boxLeft + boxWidth;
+    const boxBottom = boxTop + boxHeight;
+    const boxCenterX = boxLeft + boxWidth / 2;
+    const boxCenterY = boxTop + boxHeight / 2;
+    
+    // Get all elements at the center point
+    const centerElements = document.elementsFromPoint(boxCenterX, boxCenterY);
+    
+    // Filter out our own overlays
+    const validElements = centerElements.filter(el => 
+      !el.id.startsWith('web-augmenter-')
+    );
+    
+    if (validElements.length === 0) return null;
+    
+    // Find the element that best fits the drawn box
+    let bestElement: Element | null = null;
+    let bestScore = Infinity;
+    
+    for (const element of validElements) {
+      const rect = element.getBoundingClientRect();
+      
+      // Calculate how well this element fits the drawn box
+      const overlapLeft = Math.max(boxLeft, rect.left);
+      const overlapTop = Math.max(boxTop, rect.top);
+      const overlapRight = Math.min(boxRight, rect.right);
+      const overlapBottom = Math.min(boxBottom, rect.bottom);
+      
+      const overlapWidth = Math.max(0, overlapRight - overlapLeft);
+      const overlapHeight = Math.max(0, overlapBottom - overlapTop);
+      const overlapArea = overlapWidth * overlapHeight;
+      
+      const elementArea = rect.width * rect.height;
+      const boxArea = boxWidth * boxHeight;
+      
+      // Score based on overlap percentage and size difference
+      const overlapRatio = overlapArea / Math.min(elementArea, boxArea);
+      const sizeDiff = Math.abs(elementArea - boxArea) / boxArea;
+      
+      // Prefer elements with high overlap and similar size to the drawn box
+      const score = (1 - overlapRatio) + sizeDiff;
+      
+      if (score < bestScore && overlapRatio > 0.3) {
+        bestScore = score;
+        bestElement = element;
+      }
+    }
+    
+    return bestElement;
+  }
+
+  private selectElementForAugmentation(element: Element, selectionText?: string): void {
+    // Generate unique ID for this element
+    const elementId = `element_${Date.now()}`;
+    
+    // Extract element information
+    const elementInfo = this.extractElementInfo(element, selectionText);
+    
+    // Store element info
+    this.savedElements.set(elementId, elementInfo);
+    
+    // Highlight the element
+    this.highlightElement(element, false);
+    
+    // Show dialog to ask user what they want to do with this element
+    this.showElementDialog(elementId, elementInfo);
+  }
+
+  private getTargetElement(): Element | null {
+    // Try to get element from last right-click position
+    if (this.selectedElement) {
+      return this.selectedElement;
+    }
+    
+    // Fallback: get element from selection
+    const selection = window.getSelection();
+    if (selection && selection.rangeCount > 0) {
+      const range = selection.getRangeAt(0);
+      const container = range.commonAncestorContainer;
+      return container.nodeType === Node.ELEMENT_NODE 
+        ? container as Element 
+        : container.parentElement;
+    }
+    
+    return null;
+  }
+
+  private extractElementInfo(element: Element, selectionText?: string): ElementInfo {
+    const rect = element.getBoundingClientRect();
+    const computedStyle = window.getComputedStyle(element);
+    
+    return {
+      tagName: element.tagName.toLowerCase(),
+      id: element.id || undefined,
+      className: element.className || undefined,
+      innerText: selectionText || element.textContent?.substring(0, 200) || '',
+      innerHTML: element.innerHTML.substring(0, 500),
+      selector: this.generateSelector(element),
+      attributes: this.getElementAttributes(element),
+      styles: {
+        display: computedStyle.display,
+        position: computedStyle.position,
+        width: computedStyle.width,
+        height: computedStyle.height,
+        backgroundColor: computedStyle.backgroundColor,
+        color: computedStyle.color,
+        fontSize: computedStyle.fontSize
+      },
+      position: {
+        top: rect.top,
+        left: rect.left,
+        width: rect.width,
+        height: rect.height
+      }
+    };
+  }
+
+  private generateSelector(element: Element): string {
+    // Generate a unique CSS selector for the element
+    if (element.id) {
+      return `#${element.id}`;
+    }
+    
+    const path: string[] = [];
+    let current: Element | null = element;
+    
+    while (current && current !== document.body) {
+      let selector = current.tagName.toLowerCase();
+      
+      if (current.className) {
+        const classes = current.className.split(' ').filter(c => c.trim());
+        if (classes.length > 0) {
+          selector += '.' + classes.join('.');
+        }
+      }
+      
+      // Add nth-child if needed for uniqueness
+      const parent = current.parentElement;
+      if (parent) {
+        const siblings = Array.from(parent.children).filter(s => s.tagName === current!.tagName);
+        if (siblings.length > 1) {
+          const index = siblings.indexOf(current) + 1;
+          selector += `:nth-of-type(${index})`;
+        }
+      }
+      
+      path.unshift(selector);
+      current = current.parentElement;
+    }
+    
+    return path.join(' > ');
+  }
+
+  private getElementAttributes(element: Element): Record<string, string> {
+    const attrs: Record<string, string> = {};
+    for (let i = 0; i < element.attributes.length; i++) {
+      const attr = element.attributes[i];
+      attrs[attr.name] = attr.value;
+    }
+    return attrs;
+  }
+
+  private highlightElement(element: Element, isHover: boolean = false): void {
+    // Remove previous highlight
+    if (this.highlightOverlay) {
+      this.highlightOverlay.remove();
+    }
+    
+    const rect = element.getBoundingClientRect();
+    const overlay = document.createElement('div');
+    overlay.id = 'web-augmenter-highlight';
+    
+    const color = isHover ? '#ff9800' : '#007cba';
+    const bgOpacity = isHover ? '0.05' : '0.1';
+    
+    overlay.style.cssText = `
+      position: fixed;
+      top: ${rect.top}px;
+      left: ${rect.left}px;
+      width: ${rect.width}px;
+      height: ${rect.height}px;
+      border: 3px solid ${color};
+      background: rgba(${isHover ? '255, 152, 0' : '0, 124, 186'}, ${bgOpacity});
+      pointer-events: none;
+      z-index: 999999;
+      box-shadow: 0 0 10px rgba(${isHover ? '255, 152, 0' : '0, 124, 186'}, 0.5);
+      transition: all 0.1s ease;
+    `;
+    
+    // Add element info label
+    const label = document.createElement('div');
+    label.style.cssText = `
+      position: absolute;
+      top: -25px;
+      left: 0;
+      background: ${color};
+      color: white;
+      padding: 4px 8px;
+      border-radius: 3px;
+      font-family: monospace;
+      font-size: 12px;
+      white-space: nowrap;
+      pointer-events: none;
+    `;
+    label.textContent = `${element.tagName.toLowerCase()}${element.id ? '#' + element.id : ''}${element.className ? '.' + element.className.split(' ')[0] : ''}`;
+    overlay.appendChild(label);
+    
+    document.body.appendChild(overlay);
+    this.highlightOverlay = overlay;
+    
+    // Auto-remove after 5 seconds for non-hover highlights
+    if (!isHover) {
+      setTimeout(() => {
+        if (this.highlightOverlay === overlay) {
+          overlay.remove();
+          this.highlightOverlay = null;
+        }
+      }, 5000);
+    }
+  }
+
+  private showElementDialog(elementId: string, elementInfo: ElementInfo): void {
+    // Create a dialog asking what to do with the element
+    const dialog = document.createElement('div');
+    dialog.style.cssText = `
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+      z-index: 1000000;
+      max-width: 500px;
+      font-family: Arial, sans-serif;
+    `;
+    
+    dialog.innerHTML = `
+      <h3 style="margin: 0 0 20px 0; color: #333; text-align: center;">✨ What would you like to do?</h3>
+      <textarea 
+        id="augmenter-instruction" 
+        placeholder="Describe what you want to change...\n\nExamples:\n• Change the color to blue\n• Hide this element\n• Make the text bigger\n• Add a border\n• Change the background" 
+        style="width: 100%; height: 120px; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px; resize: vertical; box-sizing: border-box; font-family: Arial, sans-serif;"
+      ></textarea>
+      <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: flex-end;">
+        <button id="augmenter-cancel" style="padding: 10px 20px; background: #f0f0f0; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500;">Cancel</button>
+        <button id="augmenter-submit" style="padding: 10px 20px; background: #007cba; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500;">✨ Augment</button>
+      </div>
+    `;
+    
+    document.body.appendChild(dialog);
+    
+    // Focus on textarea
+    const textarea = dialog.querySelector('#augmenter-instruction') as HTMLTextAreaElement;
+    textarea?.focus();
+    
+    // Handle cancel
+    dialog.querySelector('#augmenter-cancel')?.addEventListener('click', () => {
+      dialog.remove();
+      if (this.highlightOverlay) {
+        this.highlightOverlay.remove();
+        this.highlightOverlay = null;
+      }
+    });
+    
+    // Handle submit
+    dialog.querySelector('#augmenter-submit')?.addEventListener('click', async () => {
+      const instruction = textarea.value.trim();
+      if (!instruction) {
+        this.showNotification('Please enter an instruction', 'error');
+        return;
+      }
+      
+      dialog.remove();
+      await this.augmentElement(elementId, instruction);
+    });
+  }
+
+  private async augmentElement(elementId: string, instruction: string): Promise<void> {
+    try {
+      const elementInfo = this.savedElements.get(elementId);
+      if (!elementInfo) {
+        throw new Error('Element not found');
+      }
+      
+      this.showNotification('Processing your request...', 'info');
+      
+      // Create a detailed instruction for the LLM
+      const detailedInstruction = `
+Modify the following element:
+- Selector: ${elementInfo.selector}
+- Tag: ${elementInfo.tagName}
+- Current text: ${elementInfo.innerText}
+
+User instruction: ${instruction}
+
+Please generate CSS and/or JavaScript to ${instruction}. Target the element using the selector: ${elementInfo.selector}`;
+      
+      // Send to augmenter
+      await this.handleExecuteInstruction(detailedInstruction, false);
+      
+      // Clean up
+      if (this.highlightOverlay) {
+        this.highlightOverlay.remove();
+        this.highlightOverlay = null;
+      }
+      
+    } catch (error) {
+      console.error('Web Augmenter: Failed to augment element:', error);
+      this.showNotification('Failed to augment element', 'error');
+    }
+  }
+
   private async handleStorageChanged(changes: any): Promise<void> {
     // Re-apply auto-features if custom features changed
     if (changes.customFeatures) {
@@ -371,6 +852,21 @@ class ContentScript {
     observer.observe(document.body, {
       childList: true,
       subtree: true
+    });
+  }
+
+  private setupElementTracking(): void {
+    // Track the element under cursor when context menu is opened
+    document.addEventListener('contextmenu', (event) => {
+      const target = event.target as Element;
+      if (target && target.nodeType === Node.ELEMENT_NODE) {
+        this.selectedElement = target;
+        
+        // Clear after 2 seconds if not used
+        setTimeout(() => {
+          this.selectedElement = null;
+        }, 2000);
+      }
     });
   }
 

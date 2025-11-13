@@ -778,6 +778,14 @@
       this.isReady = false;
       this.autoAppliedFeatures = /* @__PURE__ */ new Set();
       this.extensionContextValid = true;
+      this.selectedElement = null;
+      this.highlightOverlay = null;
+      this.savedElements = /* @__PURE__ */ new Map();
+      this.isPickerActive = false;
+      this.isDrawing = false;
+      this.drawStartX = 0;
+      this.drawStartY = 0;
+      this.selectionBox = null;
       this.reapplyTimeout = null;
       this.init();
     }
@@ -811,6 +819,7 @@
       console.log("Web Augmenter: Content script ready");
       this.autoApplyFeatures();
       this.setupMutationObserver();
+      this.setupElementTracking();
     }
     setupMessageListeners() {
       chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -849,6 +858,8 @@
             return this.handleRemoveAllPatches();
           case "CONTEXT_MENU_CLICKED":
             return this.handleContextMenuClicked();
+          case "ADD_ELEMENT_TO_AUGMENTER":
+            return this.handleAddElementToAugmenter(message.selectionText);
           case "STORAGE_CHANGED":
             return this.handleStorageChanged(message.changes);
           case "APPLY_CUSTOM_FEATURE":
@@ -952,6 +963,359 @@
         url: window.location.href
       }, "*");
     }
+    async handleAddElementToAugmenter(selectionText) {
+      try {
+        this.activateElementPicker(selectionText);
+      } catch (error) {
+        console.error("Web Augmenter: Failed to add element:", error);
+        this.showNotification("Failed to add element", "error");
+      }
+    }
+    activateElementPicker(selectionText) {
+      this.isPickerActive = true;
+      this.showNotification("\u{1F4E6} Draw a box around the element to select it. Press ESC to cancel.", "info");
+      const pickerOverlay = document.createElement("div");
+      pickerOverlay.id = "web-augmenter-picker-overlay";
+      pickerOverlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 999998;
+      cursor: crosshair;
+      background: rgba(0, 0, 0, 0.01);
+    `;
+      const handleMouseMove = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (this.isDrawing) {
+          this.updateSelectionBox(e.clientX, e.clientY);
+        }
+      };
+      const handleMouseDown = (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.isDrawing = true;
+        this.drawStartX = e.clientX;
+        this.drawStartY = e.clientY;
+        this.selectionBox = document.createElement("div");
+        this.selectionBox.id = "web-augmenter-selection-box";
+        this.selectionBox.style.cssText = `
+        position: fixed;
+        border: 2px dashed #007cba;
+        background: rgba(0, 124, 186, 0.1);
+        pointer-events: none;
+        z-index: 999999;
+      `;
+        document.body.appendChild(this.selectionBox);
+      };
+      const handleMouseUp = (e) => {
+        if (this.isDrawing) {
+          e.preventDefault();
+          e.stopPropagation();
+          this.isDrawing = false;
+          const selectedElement = this.findElementInBox(
+            Math.min(this.drawStartX, e.clientX),
+            Math.min(this.drawStartY, e.clientY),
+            Math.abs(e.clientX - this.drawStartX),
+            Math.abs(e.clientY - this.drawStartY)
+          );
+          if (this.selectionBox) {
+            this.selectionBox.remove();
+            this.selectionBox = null;
+          }
+          if (selectedElement) {
+            this.deactivateElementPicker(pickerOverlay, handleMouseMove, handleMouseDown, handleMouseUp, handleKeyDown);
+            this.selectElementForAugmentation(selectedElement, selectionText);
+          }
+        }
+      };
+      const handleKeyDown = (e) => {
+        if (e.key === "Escape") {
+          e.preventDefault();
+          this.deactivateElementPicker(pickerOverlay, handleMouseMove, handleMouseDown, handleMouseUp, handleKeyDown);
+          this.showNotification("Element picker cancelled", "info");
+        }
+      };
+      pickerOverlay.addEventListener("mousemove", handleMouseMove);
+      pickerOverlay.addEventListener("mousedown", handleMouseDown);
+      pickerOverlay.addEventListener("mouseup", handleMouseUp);
+      document.addEventListener("keydown", handleKeyDown);
+      document.body.appendChild(pickerOverlay);
+    }
+    deactivateElementPicker(overlay, mouseMoveHandler, mouseDownHandler, mouseUpHandler, keyDownHandler) {
+      this.isPickerActive = false;
+      this.isDrawing = false;
+      overlay.removeEventListener("mousemove", mouseMoveHandler);
+      overlay.removeEventListener("mousedown", mouseDownHandler);
+      overlay.removeEventListener("mouseup", mouseUpHandler);
+      document.removeEventListener("keydown", keyDownHandler);
+      overlay.remove();
+      if (this.highlightOverlay) {
+        this.highlightOverlay.remove();
+        this.highlightOverlay = null;
+      }
+      if (this.selectionBox) {
+        this.selectionBox.remove();
+        this.selectionBox = null;
+      }
+    }
+    updateSelectionBox(currentX, currentY) {
+      if (!this.selectionBox) return;
+      const left = Math.min(this.drawStartX, currentX);
+      const top = Math.min(this.drawStartY, currentY);
+      const width = Math.abs(currentX - this.drawStartX);
+      const height = Math.abs(currentY - this.drawStartY);
+      this.selectionBox.style.left = `${left}px`;
+      this.selectionBox.style.top = `${top}px`;
+      this.selectionBox.style.width = `${width}px`;
+      this.selectionBox.style.height = `${height}px`;
+    }
+    findElementInBox(boxLeft, boxTop, boxWidth, boxHeight) {
+      const boxRight = boxLeft + boxWidth;
+      const boxBottom = boxTop + boxHeight;
+      const boxCenterX = boxLeft + boxWidth / 2;
+      const boxCenterY = boxTop + boxHeight / 2;
+      const centerElements = document.elementsFromPoint(boxCenterX, boxCenterY);
+      const validElements = centerElements.filter(
+        (el) => !el.id.startsWith("web-augmenter-")
+      );
+      if (validElements.length === 0) return null;
+      let bestElement = null;
+      let bestScore = Infinity;
+      for (const element of validElements) {
+        const rect = element.getBoundingClientRect();
+        const overlapLeft = Math.max(boxLeft, rect.left);
+        const overlapTop = Math.max(boxTop, rect.top);
+        const overlapRight = Math.min(boxRight, rect.right);
+        const overlapBottom = Math.min(boxBottom, rect.bottom);
+        const overlapWidth = Math.max(0, overlapRight - overlapLeft);
+        const overlapHeight = Math.max(0, overlapBottom - overlapTop);
+        const overlapArea = overlapWidth * overlapHeight;
+        const elementArea = rect.width * rect.height;
+        const boxArea = boxWidth * boxHeight;
+        const overlapRatio = overlapArea / Math.min(elementArea, boxArea);
+        const sizeDiff = Math.abs(elementArea - boxArea) / boxArea;
+        const score = 1 - overlapRatio + sizeDiff;
+        if (score < bestScore && overlapRatio > 0.3) {
+          bestScore = score;
+          bestElement = element;
+        }
+      }
+      return bestElement;
+    }
+    selectElementForAugmentation(element, selectionText) {
+      const elementId = `element_${Date.now()}`;
+      const elementInfo = this.extractElementInfo(element, selectionText);
+      this.savedElements.set(elementId, elementInfo);
+      this.highlightElement(element, false);
+      this.showElementDialog(elementId, elementInfo);
+    }
+    getTargetElement() {
+      if (this.selectedElement) {
+        return this.selectedElement;
+      }
+      const selection = window.getSelection();
+      if (selection && selection.rangeCount > 0) {
+        const range = selection.getRangeAt(0);
+        const container = range.commonAncestorContainer;
+        return container.nodeType === Node.ELEMENT_NODE ? container : container.parentElement;
+      }
+      return null;
+    }
+    extractElementInfo(element, selectionText) {
+      const rect = element.getBoundingClientRect();
+      const computedStyle = window.getComputedStyle(element);
+      return {
+        tagName: element.tagName.toLowerCase(),
+        id: element.id || void 0,
+        className: element.className || void 0,
+        innerText: selectionText || element.textContent?.substring(0, 200) || "",
+        innerHTML: element.innerHTML.substring(0, 500),
+        selector: this.generateSelector(element),
+        attributes: this.getElementAttributes(element),
+        styles: {
+          display: computedStyle.display,
+          position: computedStyle.position,
+          width: computedStyle.width,
+          height: computedStyle.height,
+          backgroundColor: computedStyle.backgroundColor,
+          color: computedStyle.color,
+          fontSize: computedStyle.fontSize
+        },
+        position: {
+          top: rect.top,
+          left: rect.left,
+          width: rect.width,
+          height: rect.height
+        }
+      };
+    }
+    generateSelector(element) {
+      if (element.id) {
+        return `#${element.id}`;
+      }
+      const path = [];
+      let current = element;
+      while (current && current !== document.body) {
+        let selector = current.tagName.toLowerCase();
+        if (current.className) {
+          const classes = current.className.split(" ").filter((c) => c.trim());
+          if (classes.length > 0) {
+            selector += "." + classes.join(".");
+          }
+        }
+        const parent = current.parentElement;
+        if (parent) {
+          const siblings = Array.from(parent.children).filter((s) => s.tagName === current.tagName);
+          if (siblings.length > 1) {
+            const index = siblings.indexOf(current) + 1;
+            selector += `:nth-of-type(${index})`;
+          }
+        }
+        path.unshift(selector);
+        current = current.parentElement;
+      }
+      return path.join(" > ");
+    }
+    getElementAttributes(element) {
+      const attrs = {};
+      for (let i = 0; i < element.attributes.length; i++) {
+        const attr = element.attributes[i];
+        attrs[attr.name] = attr.value;
+      }
+      return attrs;
+    }
+    highlightElement(element, isHover = false) {
+      if (this.highlightOverlay) {
+        this.highlightOverlay.remove();
+      }
+      const rect = element.getBoundingClientRect();
+      const overlay = document.createElement("div");
+      overlay.id = "web-augmenter-highlight";
+      const color = isHover ? "#ff9800" : "#007cba";
+      const bgOpacity = isHover ? "0.05" : "0.1";
+      overlay.style.cssText = `
+      position: fixed;
+      top: ${rect.top}px;
+      left: ${rect.left}px;
+      width: ${rect.width}px;
+      height: ${rect.height}px;
+      border: 3px solid ${color};
+      background: rgba(${isHover ? "255, 152, 0" : "0, 124, 186"}, ${bgOpacity});
+      pointer-events: none;
+      z-index: 999999;
+      box-shadow: 0 0 10px rgba(${isHover ? "255, 152, 0" : "0, 124, 186"}, 0.5);
+      transition: all 0.1s ease;
+    `;
+      const label = document.createElement("div");
+      label.style.cssText = `
+      position: absolute;
+      top: -25px;
+      left: 0;
+      background: ${color};
+      color: white;
+      padding: 4px 8px;
+      border-radius: 3px;
+      font-family: monospace;
+      font-size: 12px;
+      white-space: nowrap;
+      pointer-events: none;
+    `;
+      label.textContent = `${element.tagName.toLowerCase()}${element.id ? "#" + element.id : ""}${element.className ? "." + element.className.split(" ")[0] : ""}`;
+      overlay.appendChild(label);
+      document.body.appendChild(overlay);
+      this.highlightOverlay = overlay;
+      if (!isHover) {
+        setTimeout(() => {
+          if (this.highlightOverlay === overlay) {
+            overlay.remove();
+            this.highlightOverlay = null;
+          }
+        }, 5e3);
+      }
+    }
+    showElementDialog(elementId, elementInfo) {
+      const dialog = document.createElement("div");
+      dialog.style.cssText = `
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: white;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+      z-index: 1000000;
+      max-width: 500px;
+      font-family: Arial, sans-serif;
+    `;
+      dialog.innerHTML = `
+      <h3 style="margin: 0 0 20px 0; color: #333; text-align: center;">\u2728 What would you like to do?</h3>
+      <textarea 
+        id="augmenter-instruction" 
+        placeholder="Describe what you want to change...
+
+Examples:
+\u2022 Change the color to blue
+\u2022 Hide this element
+\u2022 Make the text bigger
+\u2022 Add a border
+\u2022 Change the background" 
+        style="width: 100%; height: 120px; padding: 12px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px; resize: vertical; box-sizing: border-box; font-family: Arial, sans-serif;"
+      ></textarea>
+      <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: flex-end;">
+        <button id="augmenter-cancel" style="padding: 10px 20px; background: #f0f0f0; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500;">Cancel</button>
+        <button id="augmenter-submit" style="padding: 10px 20px; background: #007cba; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500;">\u2728 Augment</button>
+      </div>
+    `;
+      document.body.appendChild(dialog);
+      const textarea = dialog.querySelector("#augmenter-instruction");
+      textarea?.focus();
+      dialog.querySelector("#augmenter-cancel")?.addEventListener("click", () => {
+        dialog.remove();
+        if (this.highlightOverlay) {
+          this.highlightOverlay.remove();
+          this.highlightOverlay = null;
+        }
+      });
+      dialog.querySelector("#augmenter-submit")?.addEventListener("click", async () => {
+        const instruction = textarea.value.trim();
+        if (!instruction) {
+          this.showNotification("Please enter an instruction", "error");
+          return;
+        }
+        dialog.remove();
+        await this.augmentElement(elementId, instruction);
+      });
+    }
+    async augmentElement(elementId, instruction) {
+      try {
+        const elementInfo = this.savedElements.get(elementId);
+        if (!elementInfo) {
+          throw new Error("Element not found");
+        }
+        this.showNotification("Processing your request...", "info");
+        const detailedInstruction = `
+Modify the following element:
+- Selector: ${elementInfo.selector}
+- Tag: ${elementInfo.tagName}
+- Current text: ${elementInfo.innerText}
+
+User instruction: ${instruction}
+
+Please generate CSS and/or JavaScript to ${instruction}. Target the element using the selector: ${elementInfo.selector}`;
+        await this.handleExecuteInstruction(detailedInstruction, false);
+        if (this.highlightOverlay) {
+          this.highlightOverlay.remove();
+          this.highlightOverlay = null;
+        }
+      } catch (error) {
+        console.error("Web Augmenter: Failed to augment element:", error);
+        this.showNotification("Failed to augment element", "error");
+      }
+    }
     async handleStorageChanged(changes) {
       if (changes.customFeatures) {
         this.autoApplyFeatures();
@@ -1049,6 +1413,17 @@
       observer.observe(document.body, {
         childList: true,
         subtree: true
+      });
+    }
+    setupElementTracking() {
+      document.addEventListener("contextmenu", (event) => {
+        const target = event.target;
+        if (target && target.nodeType === Node.ELEMENT_NODE) {
+          this.selectedElement = target;
+          setTimeout(() => {
+            this.selectedElement = null;
+          }, 2e3);
+        }
       });
     }
     debounceReapply() {

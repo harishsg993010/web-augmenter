@@ -40,6 +40,31 @@ export interface DOMElementInfo {
   selector?: string;
 }
 
+export interface ElementInfo {
+  tagName: string;
+  id?: string;
+  className?: string;
+  innerText: string;
+  innerHTML: string;
+  selector: string;
+  attributes: Record<string, string>;
+  styles: {
+    display: string;
+    position: string;
+    width: string;
+    height: string;
+    backgroundColor: string;
+    color: string;
+    fontSize: string;
+  };
+  position: {
+    top: number;
+    left: number;
+    width: number;
+    height: number;
+  };
+}
+
 export interface PageContext {
   domSummary: DOMSnapshot;
   url: string;

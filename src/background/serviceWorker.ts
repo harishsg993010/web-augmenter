@@ -391,6 +391,12 @@ class BackgroundService {
         title: 'Enhance this page with Web Augmenter',
         contexts: ['page']
       });
+
+      chrome.contextMenus.create({
+        id: 'web-augmenter-add-element',
+        title: 'Add to Augmenter',
+        contexts: ['all']
+      });
     });
 
     chrome.contextMenus.onClicked.addListener(async (info, tab) => {
@@ -402,6 +408,16 @@ class BackgroundService {
           });
         } catch (error) {
           console.warn('Could not send context menu message:', error);
+        }
+      } else if (info.menuItemId === 'web-augmenter-add-element' && tab?.id) {
+        // Send message to content script to capture selected element
+        try {
+          chrome.tabs.sendMessage(tab.id, {
+            type: 'ADD_ELEMENT_TO_AUGMENTER',
+            selectionText: info.selectionText
+          });
+        } catch (error) {
+          console.warn('Could not send add element message:', error);
         }
       }
     });
