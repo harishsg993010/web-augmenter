@@ -387,29 +387,20 @@ class BackgroundService {
   private setupContextMenus(): void {
     chrome.runtime.onInstalled.addListener(() => {
       chrome.contextMenus.create({
-        id: 'web-augmenter-enhance',
-        title: 'Enhance this page with Web Augmenter',
-        contexts: ['page']
-      });
-
-      chrome.contextMenus.create({
         id: 'web-augmenter-add-element',
         title: 'Add to Augmenter',
         contexts: ['all']
       });
+
+      chrome.contextMenus.create({
+        id: 'web-augmenter-visual-mode',
+        title: '🎨 Enable Visual Editing Mode',
+        contexts: ['page']
+      });
     });
 
     chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-      if (info.menuItemId === 'web-augmenter-enhance' && tab?.id) {
-        // Open popup or send message to content script
-        try {
-          chrome.tabs.sendMessage(tab.id, {
-            type: 'CONTEXT_MENU_CLICKED'
-          });
-        } catch (error) {
-          console.warn('Could not send context menu message:', error);
-        }
-      } else if (info.menuItemId === 'web-augmenter-add-element' && tab?.id) {
+      if (info.menuItemId === 'web-augmenter-add-element' && tab?.id) {
         // Send message to content script to capture selected element
         try {
           chrome.tabs.sendMessage(tab.id, {
@@ -418,6 +409,15 @@ class BackgroundService {
           });
         } catch (error) {
           console.warn('Could not send add element message:', error);
+        }
+      } else if (info.menuItemId === 'web-augmenter-visual-mode' && tab?.id) {
+        // Toggle visual editing mode
+        try {
+          chrome.tabs.sendMessage(tab.id, {
+            type: 'TOGGLE_VISUAL_EDITING_MODE'
+          });
+        } catch (error) {
+          console.warn('Could not toggle visual editing mode:', error);
         }
       }
     });

@@ -13,6 +13,9 @@ async function build() {
     sourcemap: true,
     minify: false,
     external: [],
+    loader: {
+      '.wasm': 'file',
+    },
   });
 
   // Build content script (needs to be bundled without ES modules)

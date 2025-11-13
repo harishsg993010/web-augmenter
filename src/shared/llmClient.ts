@@ -2,6 +2,12 @@ import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { LLMRequest, WebFeatureResponse, PageContext } from './types.js';
 import { WEB_FEATURE_BUILDER_SYSTEM_PROMPT } from './constants.js';
+import { 
+  countMessageTokens, 
+  logTokenUsage, 
+  truncateToTokenLimit,
+  MAX_INPUT_TOKENS 
+} from './tokenCounter.js';
 
 export interface LLMClientConfig {
   apiKey?: string;
@@ -67,11 +73,8 @@ class LLMClient {
     }
   }
 
-  private buildMessages(userInstruction: string, pageContext: PageContext, screenshotBase64?: string): Anthropic.MessageParam[] {
-    const content: Anthropic.MessageParam['content'] = [];
-
-    // Build the text content - keep it concise to avoid token limits
-    let textContent = `Please analyze this web page and implement the user's request.
+  private buildPageContextText(userInstruction: string, pageContext: PageContext, maxElements: number): string {
+    return `Please analyze this web page and implement the user's request.
 
 User Request: "${userInstruction}"
 
@@ -79,10 +82,10 @@ Page Context:
 - URL: ${pageContext.url}
 - Hostname: ${pageContext.hostname}
 - Title: ${pageContext.domSummary.title}
-- DOM Elements: ${pageContext.domSummary.elements.length} key elements detected
+- DOM Elements: ${pageContext.domSummary.elements.length} key elements detected (showing top ${maxElements})
 
-Key Page Elements (Top ${Math.min(50, pageContext.domSummary.elements.length)}):
-${pageContext.domSummary.elements.slice(0, 50).map(el => {
+Key Page Elements (Top ${maxElements}):
+${pageContext.domSummary.elements.slice(0, maxElements).map(el => {
   const parts = [];
   if (el.tagName) parts.push(`<${el.tagName}>`);
   if (el.id) parts.push(`id="${el.id}"`);
@@ -104,6 +107,30 @@ ${pageContext.domSummary.elements.slice(0, 50).map(el => {
 - read_page_source(start, end) - Read HTML source lines
 
 Please respond with valid JSON following the exact schema specified in the system prompt.`;
+  }
+
+  private buildMessages(userInstruction: string, pageContext: PageContext, screenshotBase64?: string): Anthropic.MessageParam[] {
+    const content: Anthropic.MessageParam['content'] = [];
+
+    // Determine how many elements to include based on token budget
+    // Start conservative to leave room for tool results (which can be large)
+    let maxElements = Math.min(30, pageContext.domSummary.elements.length);
+    
+    // Build the text content - keep it concise to avoid token limits
+    let textContent = this.buildPageContextText(userInstruction, pageContext, maxElements);
+    
+    // Check token count and reduce elements if needed
+    let textTokens = countMessageTokens([{ role: 'user', content: textContent }], WEB_FEATURE_BUILDER_SYSTEM_PROMPT);
+    
+    // If we're using more than 30% of tokens just for the initial context, reduce elements
+    // This leaves plenty of room for tool results
+    while (textTokens.percentUsed > 30 && maxElements > 10) {
+      maxElements = Math.floor(maxElements * 0.7); // Reduce by 30%
+      textContent = this.buildPageContextText(userInstruction, pageContext, maxElements);
+      textTokens = countMessageTokens([{ role: 'user', content: textContent }], WEB_FEATURE_BUILDER_SYSTEM_PROMPT);
+    }
+    
+    console.log(`Web Augmenter: Including ${maxElements} DOM elements in context (${textTokens.totalTokens.toLocaleString()} tokens, ${textTokens.percentUsed.toFixed(1)}% of limit)`);
 
     content.push({
       type: 'text',
@@ -136,6 +163,27 @@ Please respond with valid JSON following the exact schema specified in the syste
   private async makeAnthropicAPICall(messages: Anthropic.MessageParam[], tabId?: number): Promise<string> {
     if (!this.anthropic) {
       throw new Error('Anthropic client not initialized');
+    }
+
+    // Count tokens BEFORE making the API call
+    const tokenCount = countMessageTokens(messages, WEB_FEATURE_BUILDER_SYSTEM_PROMPT);
+    logTokenUsage(tokenCount, 'Initial request');
+
+    // Check if we're within the token limit
+    if (!tokenCount.withinLimit) {
+      const excess = tokenCount.totalTokens - tokenCount.maxTokens;
+      throw new Error(
+        `Prompt is too long: ${tokenCount.totalTokens.toLocaleString()} tokens > ${tokenCount.maxTokens.toLocaleString()} maximum. ` +
+        `Exceeds limit by ${excess.toLocaleString()} tokens. Try reducing the page complexity or use a simpler instruction.`
+      );
+    }
+
+    // Warn if we're using more than 80% of the limit
+    if (tokenCount.percentUsed > 80) {
+      console.warn(
+        `⚠️ Token usage is high (${tokenCount.percentUsed.toFixed(1)}%). ` +
+        `Consider reducing page context to avoid hitting limits.`
+      );
     }
 
     // Define tools for DOM exploration
@@ -234,6 +282,20 @@ Please respond with valid JSON following the exact schema specified in the syste
     while (iteration < maxIterations) {
       iteration++;
 
+      // Check token count before each iteration
+      if (iteration > 1) {
+        const iterationTokenCount = countMessageTokens(currentMessages, WEB_FEATURE_BUILDER_SYSTEM_PROMPT);
+        logTokenUsage(iterationTokenCount, `Iteration ${iteration}`);
+        
+        if (!iterationTokenCount.withinLimit) {
+          throw new Error(
+            `Token limit exceeded during tool execution (iteration ${iteration}). ` +
+            `Current: ${iterationTokenCount.totalTokens.toLocaleString()} tokens. ` +
+            `Try using fewer tools or simpler queries.`
+          );
+        }
+      }
+
       // Make API call
       const response = await this.anthropic.messages.create({
         model: this.config.model!,
@@ -289,6 +351,17 @@ Please respond with valid JSON following the exact schema specified in the syste
           }
         } else {
           toolResult = JSON.stringify({ error: 'No tab ID available for tool execution' });
+        }
+        
+        // Truncate tool results if they're too large
+        // Limit each tool result to ~10k tokens (35k characters) to prevent overflow
+        const MAX_TOOL_RESULT_TOKENS = 10000;
+        const maxChars = MAX_TOOL_RESULT_TOKENS * 3.5;
+        
+        if (toolResult.length > maxChars) {
+          const truncated = toolResult.substring(0, maxChars);
+          toolResult = truncated + '\n\n[... Result truncated due to length. Consider using more specific selectors or reducing maxResults ...]';
+          console.warn(`Web Augmenter: Tool result truncated from ${toolResult.length} to ${maxChars} characters`);
         }
         
         toolResults.push({

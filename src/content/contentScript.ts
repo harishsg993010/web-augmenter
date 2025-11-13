@@ -24,6 +24,17 @@ class ContentScript {
   private drawStartX: number = 0;
   private drawStartY: number = 0;
   private selectionBox: HTMLElement | null = null;
+  private visualEditingMode: boolean = false;
+  private visualModeOverlay: HTMLElement | null = null;
+  private visualModeIndicator: HTMLElement | null = null;
+  private isAugmenting: boolean = false;
+  private isDragging: boolean = false;
+  private draggedElement: HTMLElement | null = null;
+  private dragStartX: number = 0;
+  private dragStartY: number = 0;
+  private dragElementStartX: number = 0;
+  private dragElementStartY: number = 0;
+  private dragGhost: HTMLElement | null = null;
 
   constructor() {
     this.init();
@@ -131,6 +142,9 @@ class ContentScript {
         case 'ADD_ELEMENT_TO_AUGMENTER':
           return this.handleAddElementToAugmenter(message.selectionText);
 
+        case 'TOGGLE_VISUAL_EDITING_MODE':
+          return this.toggleVisualEditingMode();
+
         case 'STORAGE_CHANGED':
           return this.handleStorageChanged(message.changes);
 
@@ -159,7 +173,31 @@ class ContentScript {
       console.log('Web Augmenter: Executing instruction:', userInstruction);
 
       // Generate DOM snapshot
-      const domSummary = domSnapshotGenerator.generate();
+      let domSummary = domSnapshotGenerator.generate();
+      
+      // Truncate if too large (estimate ~4 chars per token)
+      const MAX_TOKENS = 180000; // Leave buffer for response
+      const estimatedTokens = JSON.stringify(domSummary).length / 4;
+      
+      if (estimatedTokens > MAX_TOKENS) {
+        console.warn(`DOM snapshot too large (${Math.round(estimatedTokens)} tokens), truncating...`);
+        
+        // Aggressively truncate fullHTML
+        if (domSummary.fullHTML) {
+          const maxHtmlChars = 50000; // ~12.5k tokens
+          if (domSummary.fullHTML.length > maxHtmlChars) {
+            domSummary.fullHTML = domSummary.fullHTML.substring(0, maxHtmlChars) + '\n<!-- ... HTML truncated due to size ... -->';
+          }
+        }
+        
+        // Reduce elements if still too large
+        const newEstimate = JSON.stringify(domSummary).length / 4;
+        if (newEstimate > MAX_TOKENS) {
+          const maxElements = Math.floor(domSummary.elements.length * (MAX_TOKENS / newEstimate));
+          domSummary.elements = domSummary.elements.slice(0, Math.max(100, maxElements));
+          console.warn(`Reduced elements to ${domSummary.elements.length}`);
+        }
+      }
 
       const pageContext: PageContext = {
         domSummary,
@@ -577,8 +615,13 @@ class ContentScript {
   }
 
   private highlightElement(element: Element, isHover: boolean = false): void {
-    // Remove previous highlight
+    // Remove previous highlight only if it's the same type or we're selecting (blue)
     if (this.highlightOverlay) {
+      const isCurrentHover = this.highlightOverlay.style.borderColor === 'rgb(255, 152, 0)';
+      // If we're hovering and there's a blue selection, don't remove it
+      if (isHover && !isCurrentHover) {
+        return; // Keep the blue selection, don't show orange hover
+      }
       this.highlightOverlay.remove();
     }
     
@@ -635,6 +678,134 @@ class ContentScript {
     }
   }
 
+  private showInlineElementDialog(elementId: string, elementInfo: ElementInfo, element: Element): void {
+    // Create an inline dialog near the element
+    const rect = element.getBoundingClientRect();
+    const dialog = document.createElement('div');
+    dialog.id = 'web-augmenter-inline-dialog';
+    
+    // Calculate position (try to show below element, or above if not enough space)
+    const showBelow = rect.bottom + 200 < window.innerHeight;
+    const top = showBelow ? rect.bottom + 10 : rect.top - 210;
+    const left = Math.min(Math.max(rect.left, 10), window.innerWidth - 410);
+    
+    dialog.style.cssText = `
+      position: fixed;
+      top: ${top}px;
+      left: ${left}px;
+      background: white;
+      padding: 16px;
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+      z-index: 1000002;
+      width: 400px;
+      font-family: Arial, sans-serif;
+      animation: slideIn 0.2s ease-out;
+    `;
+    
+    // Add animation keyframes
+    if (!document.getElementById('web-augmenter-animations')) {
+      const style = document.createElement('style');
+      style.id = 'web-augmenter-animations';
+      style.textContent = `
+        @keyframes slideIn {
+          from {
+            opacity: 0;
+            transform: translateY(-10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+      `;
+      document.head.appendChild(style);
+    }
+    
+    dialog.innerHTML = `
+      <div style="margin-bottom: 12px;">
+        <div style="font-size: 14px; font-weight: 600; color: #333; margin-bottom: 8px;">✨ Edit this element</div>
+        <div style="font-size: 11px; color: #888; font-family: monospace;">${elementInfo.tagName}${elementInfo.id ? '#' + elementInfo.id : ''}</div>
+      </div>
+      <textarea 
+        id="augmenter-instruction" 
+        placeholder="What would you like to change?\n\ne.g., Change color to blue, Hide this, Make bigger..." 
+        style="width: 100%; height: 90px; padding: 10px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 13px; resize: none; box-sizing: border-box; font-family: Arial, sans-serif; outline: none; transition: border-color 0.2s;"
+        onfocus="this.style.borderColor='#007cba'"
+        onblur="this.style.borderColor='#e0e0e0'"
+      ></textarea>
+      <div style="margin-top: 12px; display: flex; gap: 8px; justify-content: flex-end;">
+        <button id="augmenter-cancel" style="padding: 8px 16px; background: #f5f5f5; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; color: #666; transition: background 0.2s;"
+          onmouseover="this.style.background='#e0e0e0'"
+          onmouseout="this.style.background='#f5f5f5'">Cancel</button>
+        <button id="augmenter-submit" style="padding: 8px 16px; background: #007cba; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: background 0.2s;"
+          onmouseover="this.style.background='#005a8b'"
+          onmouseout="this.style.background='#007cba'">✨ Apply</button>
+      </div>
+    `;
+    
+    document.body.appendChild(dialog);
+    
+    // Focus on textarea
+    const textarea = dialog.querySelector('#augmenter-instruction') as HTMLTextAreaElement;
+    textarea?.focus();
+    
+    // Handle cancel
+    dialog.querySelector('#augmenter-cancel')?.addEventListener('click', () => {
+      dialog.remove();
+      // Remove blue highlight when canceling
+      if (this.highlightOverlay) {
+        this.highlightOverlay.remove();
+        this.highlightOverlay = null;
+      }
+    });
+    
+    // Handle submit
+    dialog.querySelector('#augmenter-submit')?.addEventListener('click', async () => {
+      const instruction = textarea.value.trim();
+      if (!instruction) {
+        textarea.style.borderColor = '#f44336';
+        textarea.placeholder = 'Please enter an instruction!';
+        setTimeout(() => {
+          textarea.style.borderColor = '#e0e0e0';
+        }, 2000);
+        return;
+      }
+      
+      // Disable the button and show loading state
+      const submitBtn = dialog.querySelector('#augmenter-submit') as HTMLButtonElement;
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.style.opacity = '0.6';
+        submitBtn.style.cursor = 'not-allowed';
+        submitBtn.innerHTML = '⏳ Applying...';
+      }
+      
+      this.isAugmenting = true;
+      dialog.remove();
+      
+      try {
+        await this.augmentElement(elementId, instruction);
+      } finally {
+        this.isAugmenting = false;
+        
+        // Remove blue highlight after augmentation
+        if (this.highlightOverlay) {
+          this.highlightOverlay.remove();
+          this.highlightOverlay = null;
+        }
+      }
+    });
+    
+    // Handle Enter key to submit
+    textarea.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        dialog.querySelector<HTMLButtonElement>('#augmenter-submit')?.click();
+      }
+    });
+  }
+
   private showElementDialog(elementId: string, elementInfo: ElementInfo): void {
     // Create a dialog asking what to do with the element
     const dialog = document.createElement('div');
@@ -674,6 +845,7 @@ class ContentScript {
     // Handle cancel
     dialog.querySelector('#augmenter-cancel')?.addEventListener('click', () => {
       dialog.remove();
+      // Remove blue highlight when canceling
       if (this.highlightOverlay) {
         this.highlightOverlay.remove();
         this.highlightOverlay = null;
@@ -690,6 +862,12 @@ class ContentScript {
       
       dialog.remove();
       await this.augmentElement(elementId, instruction);
+      
+      // Remove blue highlight after augmentation
+      if (this.highlightOverlay) {
+        this.highlightOverlay.remove();
+        this.highlightOverlay = null;
+      }
     });
   }
 
@@ -869,6 +1047,295 @@ Please generate CSS and/or JavaScript to ${instruction}. Target the element usin
       }
     });
   }
+
+  private toggleVisualEditingMode(): void {
+    this.visualEditingMode = !this.visualEditingMode;
+    
+    if (this.visualEditingMode) {
+      this.enableVisualEditingMode();
+    } else {
+      this.disableVisualEditingMode();
+    }
+  }
+
+  private enableVisualEditingMode(): void {
+    this.showNotification('🎨 Visual Editing Mode Enabled - Click any element to edit it', 'success');
+    
+    // Create semi-transparent overlay
+    this.visualModeOverlay = document.createElement('div');
+    this.visualModeOverlay.id = 'web-augmenter-visual-mode-overlay';
+    this.visualModeOverlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 999997;
+      pointer-events: none;
+      background: rgba(0, 124, 186, 0.02);
+    `;
+    document.body.appendChild(this.visualModeOverlay);
+    
+    // Create persistent indicator
+    this.visualModeIndicator = document.createElement('div');
+    this.visualModeIndicator.id = 'web-augmenter-visual-indicator';
+    this.visualModeIndicator.style.cssText = `
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 12px 20px;
+      border-radius: 25px;
+      font-family: Arial, sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      z-index: 1000001;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    `;
+    this.visualModeIndicator.innerHTML = '🎨 Visual Editing Mode <span style="opacity: 0.7; font-size: 11px; margin-left: 8px;">Alt+Drag to move • Click to edit • Click here to disable</span>';
+    
+    // Click indicator to disable mode
+    this.visualModeIndicator.addEventListener('click', () => {
+      this.toggleVisualEditingMode();
+    });
+    
+    document.body.appendChild(this.visualModeIndicator);
+    
+    // Add click listener to all elements
+    document.addEventListener('click', this.handleVisualModeClick, true);
+    document.addEventListener('mouseover', this.handleVisualModeHover, true);
+    document.addEventListener('mouseout', this.handleVisualModeOut, true);
+    document.addEventListener('mousedown', this.handleVisualModeDragStart, true);
+    document.addEventListener('mousemove', this.handleVisualModeDragMove, true);
+    document.addEventListener('mouseup', this.handleVisualModeDragEnd, true);
+  }
+
+  private disableVisualEditingMode(): void {
+    this.showNotification('Visual Editing Mode Disabled', 'info');
+    
+    // Reset augmenting state
+    this.isAugmenting = false;
+    
+    // Remove overlay and indicator
+    if (this.visualModeOverlay) {
+      this.visualModeOverlay.remove();
+      this.visualModeOverlay = null;
+    }
+    
+    if (this.visualModeIndicator) {
+      this.visualModeIndicator.remove();
+      this.visualModeIndicator = null;
+    }
+    
+    if (this.highlightOverlay) {
+      this.highlightOverlay.remove();
+      this.highlightOverlay = null;
+    }
+    
+    // Close any open dialog
+    const openDialog = document.querySelector('div[style*="position: fixed"][style*="transform: translate(-50%, -50%)"]');
+    if (openDialog && openDialog.textContent?.includes('What would you like to do')) {
+      openDialog.remove();
+    }
+    
+    // Close inline dialog
+    const inlineDialog = document.getElementById('web-augmenter-inline-dialog');
+    if (inlineDialog) {
+      inlineDialog.remove();
+    }
+    
+    // Remove event listeners
+    document.removeEventListener('click', this.handleVisualModeClick, true);
+    document.removeEventListener('mouseover', this.handleVisualModeHover, true);
+    document.removeEventListener('mouseout', this.handleVisualModeOut, true);
+    document.removeEventListener('mousedown', this.handleVisualModeDragStart, true);
+    document.removeEventListener('mousemove', this.handleVisualModeDragMove, true);
+    document.removeEventListener('mouseup', this.handleVisualModeDragEnd, true);
+  }
+
+  private handleVisualModeClick = (e: MouseEvent): void => {
+    const target = e.target as Element;
+    
+    // Ignore clicks on our own UI and dialogs
+    if (target.id?.startsWith('web-augmenter-') || 
+        target.closest('#web-augmenter-visual-indicator') ||
+        target.closest('#web-augmenter-inline-dialog') ||
+        target.closest('div[style*="position: fixed"][style*="transform: translate(-50%, -50%)"]')) {
+      return;
+    }
+    
+    // Don't allow selecting new elements while augmenting
+    if (this.isAugmenting) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    
+    e.preventDefault();
+    e.stopPropagation();
+    
+    // Close any existing inline dialog
+    const existingDialog = document.getElementById('web-augmenter-inline-dialog');
+    if (existingDialog) {
+      existingDialog.remove();
+    }
+    
+    // Select this element for augmentation
+    const elementId = `element_${Date.now()}`;
+    const elementInfo = this.extractElementInfo(target);
+    this.savedElements.set(elementId, elementInfo);
+    
+    // Highlight and show inline dialog (blue highlight for selected)
+    this.highlightElement(target, false);
+    this.showInlineElementDialog(elementId, elementInfo, target);
+  };
+
+  private handleVisualModeHover = (e: MouseEvent): void => {
+    const target = e.target as Element;
+    
+    // Ignore our own UI
+    if (target.id?.startsWith('web-augmenter-') || 
+        target.closest('#web-augmenter-visual-indicator') ||
+        target.closest('#web-augmenter-inline-dialog')) {
+      return;
+    }
+    
+    // Don't show hover highlights while augmenting
+    if (this.isAugmenting) {
+      return;
+    }
+    
+    // Highlight element on hover
+    this.highlightElement(target, true);
+  };
+
+  private handleVisualModeOut = (e: MouseEvent): void => {
+    // Remove highlight when mouse leaves, but only if it's orange (hover)
+    if (this.highlightOverlay && this.highlightOverlay.id === 'web-augmenter-highlight') {
+      const isHoverHighlight = this.highlightOverlay.style.borderColor === 'rgb(255, 152, 0)';
+      if (isHoverHighlight) {
+        this.highlightOverlay.remove();
+        this.highlightOverlay = null;
+      }
+    }
+  };
+
+  private handleVisualModeDragStart = (e: MouseEvent): void => {
+    const target = e.target as HTMLElement;
+    
+    // Ignore our own UI
+    if (target.id?.startsWith('web-augmenter-') || 
+        target.closest('#web-augmenter-visual-indicator') ||
+        target.closest('#web-augmenter-inline-dialog')) {
+      return;
+    }
+    
+    // Don't drag while augmenting
+    if (this.isAugmenting) {
+      return;
+    }
+    
+    // Check if Alt key is pressed (drag mode)
+    if (!e.altKey) {
+      return;
+    }
+    
+    e.preventDefault();
+    e.stopPropagation();
+    
+    this.isDragging = true;
+    this.draggedElement = target;
+    this.dragStartX = e.clientX;
+    this.dragStartY = e.clientY;
+    
+    // Get current position
+    const rect = target.getBoundingClientRect();
+    this.dragElementStartX = rect.left;
+    this.dragElementStartY = rect.top;
+    
+    // Make element draggable
+    const computedStyle = window.getComputedStyle(target);
+    if (computedStyle.position === 'static') {
+      target.style.position = 'relative';
+    }
+    
+    // Create ghost element for visual feedback
+    this.dragGhost = document.createElement('div');
+    this.dragGhost.id = 'web-augmenter-drag-ghost';
+    this.dragGhost.style.cssText = `
+      position: fixed;
+      top: ${rect.top}px;
+      left: ${rect.left}px;
+      width: ${rect.width}px;
+      height: ${rect.height}px;
+      border: 3px dashed #667eea;
+      background: rgba(102, 126, 234, 0.1);
+      pointer-events: none;
+      z-index: 1000000;
+      cursor: move;
+    `;
+    document.body.appendChild(this.dragGhost);
+    
+    // Change cursor
+    document.body.style.cursor = 'move';
+    
+    // Highlight the element being dragged
+    this.highlightElement(target, false);
+  };
+
+  private handleVisualModeDragMove = (e: MouseEvent): void => {
+    if (!this.isDragging || !this.draggedElement || !this.dragGhost) {
+      return;
+    }
+    
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const deltaX = e.clientX - this.dragStartX;
+    const deltaY = e.clientY - this.dragStartY;
+    
+    // Update ghost position
+    this.dragGhost.style.left = `${this.dragElementStartX + deltaX}px`;
+    this.dragGhost.style.top = `${this.dragElementStartY + deltaY}px`;
+  };
+
+  private handleVisualModeDragEnd = (e: MouseEvent): void => {
+    if (!this.isDragging || !this.draggedElement) {
+      return;
+    }
+    
+    e.preventDefault();
+    e.stopPropagation();
+    
+    const deltaX = e.clientX - this.dragStartX;
+    const deltaY = e.clientY - this.dragStartY;
+    
+    // Apply position change to element
+    const currentLeft = parseFloat(this.draggedElement.style.left || '0');
+    const currentTop = parseFloat(this.draggedElement.style.top || '0');
+    
+    this.draggedElement.style.left = `${currentLeft + deltaX}px`;
+    this.draggedElement.style.top = `${currentTop + deltaY}px`;
+    
+    // Clean up
+    if (this.dragGhost) {
+      this.dragGhost.remove();
+      this.dragGhost = null;
+    }
+    
+    document.body.style.cursor = '';
+    
+    this.isDragging = false;
+    this.draggedElement = null;
+    
+    this.showNotification('Element moved! Position saved.', 'success');
+  };
 
   private reapplyTimeout: number | null = null;
 

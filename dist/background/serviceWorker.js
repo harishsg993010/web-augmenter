@@ -4590,6 +4590,62 @@ Anthropic.Messages = Messages2;
 Anthropic.Models = Models2;
 Anthropic.Beta = Beta;
 
+// src/shared/tokenCounter.ts
+var MAX_CONTEXT_TOKENS = 2e5;
+var RESERVED_OUTPUT_TOKENS = 4e3;
+var RESERVED_SYSTEM_TOKENS = 5e3;
+var MAX_INPUT_TOKENS = MAX_CONTEXT_TOKENS - RESERVED_OUTPUT_TOKENS - RESERVED_SYSTEM_TOKENS;
+function countTextTokens(text) {
+  return Math.ceil(text.length / 3.5);
+}
+function countMessageTokens(messages, systemPrompt) {
+  let totalTokens = 0;
+  if (systemPrompt) {
+    totalTokens += countTextTokens(systemPrompt);
+  }
+  for (const message of messages) {
+    if (typeof message.content === "string") {
+      totalTokens += countTextTokens(message.content);
+    } else if (Array.isArray(message.content)) {
+      for (const block of message.content) {
+        if (block.type === "text") {
+          totalTokens += countTextTokens(block.text);
+        } else if (block.type === "image") {
+          if ("source" in block && block.source.type === "base64") {
+            const base64Length = block.source.data.length;
+            const estimatedBytes = base64Length * 3 / 4;
+            const imageTokens = Math.ceil(estimatedBytes / 750);
+            totalTokens += imageTokens;
+          }
+        } else if (block.type === "tool_use") {
+          totalTokens += countTextTokens(JSON.stringify(block));
+        } else if (block.type === "tool_result") {
+          totalTokens += countTextTokens(block.content);
+        }
+      }
+    }
+  }
+  const withinLimit = totalTokens <= MAX_INPUT_TOKENS;
+  const percentUsed = totalTokens / MAX_INPUT_TOKENS * 100;
+  return {
+    totalTokens,
+    withinLimit,
+    maxTokens: MAX_INPUT_TOKENS,
+    percentUsed
+  };
+}
+function logTokenUsage(result, context) {
+  console.log(`[Token Counter] ${context}:`);
+  console.log(`  Total tokens: ${result.totalTokens.toLocaleString()}`);
+  console.log(`  Max allowed: ${result.maxTokens.toLocaleString()}`);
+  console.log(`  Usage: ${result.percentUsed.toFixed(1)}%`);
+  console.log(`  Within limit: ${result.withinLimit ? "\u2713" : "\u2717"}`);
+  if (!result.withinLimit) {
+    const excess = result.totalTokens - result.maxTokens;
+    console.warn(`  \u26A0\uFE0F EXCEEDS LIMIT BY ${excess.toLocaleString()} tokens!`);
+  }
+}
+
 // src/shared/llmClient.ts
 var LLMClient = class {
   constructor(config = {}) {
@@ -4638,9 +4694,8 @@ var LLMClient = class {
       }
     }
   }
-  buildMessages(userInstruction, pageContext, screenshotBase64) {
-    const content = [];
-    let textContent = `Please analyze this web page and implement the user's request.
+  buildPageContextText(userInstruction, pageContext, maxElements) {
+    return `Please analyze this web page and implement the user's request.
 
 User Request: "${userInstruction}"
 
@@ -4648,10 +4703,10 @@ Page Context:
 - URL: ${pageContext.url}
 - Hostname: ${pageContext.hostname}
 - Title: ${pageContext.domSummary.title}
-- DOM Elements: ${pageContext.domSummary.elements.length} key elements detected
+- DOM Elements: ${pageContext.domSummary.elements.length} key elements detected (showing top ${maxElements})
 
-Key Page Elements (Top ${Math.min(50, pageContext.domSummary.elements.length)}):
-${pageContext.domSummary.elements.slice(0, 50).map((el) => {
+Key Page Elements (Top ${maxElements}):
+${pageContext.domSummary.elements.slice(0, maxElements).map((el) => {
       const parts = [];
       if (el.tagName) parts.push(`<${el.tagName}>`);
       if (el.id) parts.push(`id="${el.id}"`);
@@ -4672,6 +4727,18 @@ ${pageContext.domSummary.elements.slice(0, 50).map((el) => {
 - read_page_source(start, end) - Read HTML source lines
 
 Please respond with valid JSON following the exact schema specified in the system prompt.`;
+  }
+  buildMessages(userInstruction, pageContext, screenshotBase64) {
+    const content = [];
+    let maxElements = Math.min(30, pageContext.domSummary.elements.length);
+    let textContent = this.buildPageContextText(userInstruction, pageContext, maxElements);
+    let textTokens = countMessageTokens([{ role: "user", content: textContent }], WEB_FEATURE_BUILDER_SYSTEM_PROMPT);
+    while (textTokens.percentUsed > 30 && maxElements > 10) {
+      maxElements = Math.floor(maxElements * 0.7);
+      textContent = this.buildPageContextText(userInstruction, pageContext, maxElements);
+      textTokens = countMessageTokens([{ role: "user", content: textContent }], WEB_FEATURE_BUILDER_SYSTEM_PROMPT);
+    }
+    console.log(`Web Augmenter: Including ${maxElements} DOM elements in context (${textTokens.totalTokens.toLocaleString()} tokens, ${textTokens.percentUsed.toFixed(1)}% of limit)`);
     content.push({
       type: "text",
       text: textContent
@@ -4697,6 +4764,19 @@ Please respond with valid JSON following the exact schema specified in the syste
   async makeAnthropicAPICall(messages, tabId) {
     if (!this.anthropic) {
       throw new Error("Anthropic client not initialized");
+    }
+    const tokenCount = countMessageTokens(messages, WEB_FEATURE_BUILDER_SYSTEM_PROMPT);
+    logTokenUsage(tokenCount, "Initial request");
+    if (!tokenCount.withinLimit) {
+      const excess = tokenCount.totalTokens - tokenCount.maxTokens;
+      throw new Error(
+        `Prompt is too long: ${tokenCount.totalTokens.toLocaleString()} tokens > ${tokenCount.maxTokens.toLocaleString()} maximum. Exceeds limit by ${excess.toLocaleString()} tokens. Try reducing the page complexity or use a simpler instruction.`
+      );
+    }
+    if (tokenCount.percentUsed > 80) {
+      console.warn(
+        `\u26A0\uFE0F Token usage is high (${tokenCount.percentUsed.toFixed(1)}%). Consider reducing page context to avoid hitting limits.`
+      );
     }
     const tools = [
       {
@@ -4789,6 +4869,15 @@ Please respond with valid JSON following the exact schema specified in the syste
     let iteration = 0;
     while (iteration < maxIterations) {
       iteration++;
+      if (iteration > 1) {
+        const iterationTokenCount = countMessageTokens(currentMessages, WEB_FEATURE_BUILDER_SYSTEM_PROMPT);
+        logTokenUsage(iterationTokenCount, `Iteration ${iteration}`);
+        if (!iterationTokenCount.withinLimit) {
+          throw new Error(
+            `Token limit exceeded during tool execution (iteration ${iteration}). Current: ${iterationTokenCount.totalTokens.toLocaleString()} tokens. Try using fewer tools or simpler queries.`
+          );
+        }
+      }
       const response = await this.anthropic.messages.create({
         model: this.config.model,
         max_tokens: 4e3,
@@ -4827,6 +4916,13 @@ Please respond with valid JSON following the exact schema specified in the syste
           }
         } else {
           toolResult = JSON.stringify({ error: "No tab ID available for tool execution" });
+        }
+        const MAX_TOOL_RESULT_TOKENS = 1e4;
+        const maxChars = MAX_TOOL_RESULT_TOKENS * 3.5;
+        if (toolResult.length > maxChars) {
+          const truncated = toolResult.substring(0, maxChars);
+          toolResult = truncated + "\n\n[... Result truncated due to length. Consider using more specific selectors or reducing maxResults ...]";
+          console.warn(`Web Augmenter: Tool result truncated from ${toolResult.length} to ${maxChars} characters`);
         }
         toolResults.push({
           type: "tool_result",
@@ -5622,26 +5718,18 @@ var BackgroundService = class {
   setupContextMenus() {
     chrome.runtime.onInstalled.addListener(() => {
       chrome.contextMenus.create({
-        id: "web-augmenter-enhance",
-        title: "Enhance this page with Web Augmenter",
-        contexts: ["page"]
-      });
-      chrome.contextMenus.create({
         id: "web-augmenter-add-element",
         title: "Add to Augmenter",
         contexts: ["all"]
       });
+      chrome.contextMenus.create({
+        id: "web-augmenter-visual-mode",
+        title: "\u{1F3A8} Enable Visual Editing Mode",
+        contexts: ["page"]
+      });
     });
     chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-      if (info.menuItemId === "web-augmenter-enhance" && tab?.id) {
-        try {
-          chrome.tabs.sendMessage(tab.id, {
-            type: "CONTEXT_MENU_CLICKED"
-          });
-        } catch (error) {
-          console.warn("Could not send context menu message:", error);
-        }
-      } else if (info.menuItemId === "web-augmenter-add-element" && tab?.id) {
+      if (info.menuItemId === "web-augmenter-add-element" && tab?.id) {
         try {
           chrome.tabs.sendMessage(tab.id, {
             type: "ADD_ELEMENT_TO_AUGMENTER",
@@ -5649,6 +5737,14 @@ var BackgroundService = class {
           });
         } catch (error) {
           console.warn("Could not send add element message:", error);
+        }
+      } else if (info.menuItemId === "web-augmenter-visual-mode" && tab?.id) {
+        try {
+          chrome.tabs.sendMessage(tab.id, {
+            type: "TOGGLE_VISUAL_EDITING_MODE"
+          });
+        } catch (error) {
+          console.warn("Could not toggle visual editing mode:", error);
         }
       }
     });

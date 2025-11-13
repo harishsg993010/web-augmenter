@@ -786,6 +786,132 @@
       this.drawStartX = 0;
       this.drawStartY = 0;
       this.selectionBox = null;
+      this.visualEditingMode = false;
+      this.visualModeOverlay = null;
+      this.visualModeIndicator = null;
+      this.isAugmenting = false;
+      this.isDragging = false;
+      this.draggedElement = null;
+      this.dragStartX = 0;
+      this.dragStartY = 0;
+      this.dragElementStartX = 0;
+      this.dragElementStartY = 0;
+      this.dragGhost = null;
+      this.handleVisualModeClick = (e) => {
+        const target = e.target;
+        if (target.id?.startsWith("web-augmenter-") || target.closest("#web-augmenter-visual-indicator") || target.closest("#web-augmenter-inline-dialog") || target.closest('div[style*="position: fixed"][style*="transform: translate(-50%, -50%)"]')) {
+          return;
+        }
+        if (this.isAugmenting) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        const existingDialog = document.getElementById("web-augmenter-inline-dialog");
+        if (existingDialog) {
+          existingDialog.remove();
+        }
+        const elementId = `element_${Date.now()}`;
+        const elementInfo = this.extractElementInfo(target);
+        this.savedElements.set(elementId, elementInfo);
+        this.highlightElement(target, false);
+        this.showInlineElementDialog(elementId, elementInfo, target);
+      };
+      this.handleVisualModeHover = (e) => {
+        const target = e.target;
+        if (target.id?.startsWith("web-augmenter-") || target.closest("#web-augmenter-visual-indicator") || target.closest("#web-augmenter-inline-dialog")) {
+          return;
+        }
+        if (this.isAugmenting) {
+          return;
+        }
+        this.highlightElement(target, true);
+      };
+      this.handleVisualModeOut = (e) => {
+        if (this.highlightOverlay && this.highlightOverlay.id === "web-augmenter-highlight") {
+          const isHoverHighlight = this.highlightOverlay.style.borderColor === "rgb(255, 152, 0)";
+          if (isHoverHighlight) {
+            this.highlightOverlay.remove();
+            this.highlightOverlay = null;
+          }
+        }
+      };
+      this.handleVisualModeDragStart = (e) => {
+        const target = e.target;
+        if (target.id?.startsWith("web-augmenter-") || target.closest("#web-augmenter-visual-indicator") || target.closest("#web-augmenter-inline-dialog")) {
+          return;
+        }
+        if (this.isAugmenting) {
+          return;
+        }
+        if (!e.altKey) {
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        this.isDragging = true;
+        this.draggedElement = target;
+        this.dragStartX = e.clientX;
+        this.dragStartY = e.clientY;
+        const rect = target.getBoundingClientRect();
+        this.dragElementStartX = rect.left;
+        this.dragElementStartY = rect.top;
+        const computedStyle = window.getComputedStyle(target);
+        if (computedStyle.position === "static") {
+          target.style.position = "relative";
+        }
+        this.dragGhost = document.createElement("div");
+        this.dragGhost.id = "web-augmenter-drag-ghost";
+        this.dragGhost.style.cssText = `
+      position: fixed;
+      top: ${rect.top}px;
+      left: ${rect.left}px;
+      width: ${rect.width}px;
+      height: ${rect.height}px;
+      border: 3px dashed #667eea;
+      background: rgba(102, 126, 234, 0.1);
+      pointer-events: none;
+      z-index: 1000000;
+      cursor: move;
+    `;
+        document.body.appendChild(this.dragGhost);
+        document.body.style.cursor = "move";
+        this.highlightElement(target, false);
+      };
+      this.handleVisualModeDragMove = (e) => {
+        if (!this.isDragging || !this.draggedElement || !this.dragGhost) {
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        const deltaX = e.clientX - this.dragStartX;
+        const deltaY = e.clientY - this.dragStartY;
+        this.dragGhost.style.left = `${this.dragElementStartX + deltaX}px`;
+        this.dragGhost.style.top = `${this.dragElementStartY + deltaY}px`;
+      };
+      this.handleVisualModeDragEnd = (e) => {
+        if (!this.isDragging || !this.draggedElement) {
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        const deltaX = e.clientX - this.dragStartX;
+        const deltaY = e.clientY - this.dragStartY;
+        const currentLeft = parseFloat(this.draggedElement.style.left || "0");
+        const currentTop = parseFloat(this.draggedElement.style.top || "0");
+        this.draggedElement.style.left = `${currentLeft + deltaX}px`;
+        this.draggedElement.style.top = `${currentTop + deltaY}px`;
+        if (this.dragGhost) {
+          this.dragGhost.remove();
+          this.dragGhost = null;
+        }
+        document.body.style.cursor = "";
+        this.isDragging = false;
+        this.draggedElement = null;
+        this.showNotification("Element moved! Position saved.", "success");
+      };
       this.reapplyTimeout = null;
       this.init();
     }
@@ -860,6 +986,8 @@
             return this.handleContextMenuClicked();
           case "ADD_ELEMENT_TO_AUGMENTER":
             return this.handleAddElementToAugmenter(message.selectionText);
+          case "TOGGLE_VISUAL_EDITING_MODE":
+            return this.toggleVisualEditingMode();
           case "STORAGE_CHANGED":
             return this.handleStorageChanged(message.changes);
           case "APPLY_CUSTOM_FEATURE":
@@ -881,7 +1009,24 @@
           throw new Error("Content script not ready");
         }
         console.log("Web Augmenter: Executing instruction:", userInstruction);
-        const domSummary = domSnapshotGenerator.generate();
+        let domSummary = domSnapshotGenerator.generate();
+        const MAX_TOKENS = 18e4;
+        const estimatedTokens = JSON.stringify(domSummary).length / 4;
+        if (estimatedTokens > MAX_TOKENS) {
+          console.warn(`DOM snapshot too large (${Math.round(estimatedTokens)} tokens), truncating...`);
+          if (domSummary.fullHTML) {
+            const maxHtmlChars = 5e4;
+            if (domSummary.fullHTML.length > maxHtmlChars) {
+              domSummary.fullHTML = domSummary.fullHTML.substring(0, maxHtmlChars) + "\n<!-- ... HTML truncated due to size ... -->";
+            }
+          }
+          const newEstimate = JSON.stringify(domSummary).length / 4;
+          if (newEstimate > MAX_TOKENS) {
+            const maxElements = Math.floor(domSummary.elements.length * (MAX_TOKENS / newEstimate));
+            domSummary.elements = domSummary.elements.slice(0, Math.max(100, maxElements));
+            console.warn(`Reduced elements to ${domSummary.elements.length}`);
+          }
+        }
         const pageContext = {
           domSummary,
           url: window.location.href,
@@ -1189,6 +1334,10 @@
     }
     highlightElement(element, isHover = false) {
       if (this.highlightOverlay) {
+        const isCurrentHover = this.highlightOverlay.style.borderColor === "rgb(255, 152, 0)";
+        if (isHover && !isCurrentHover) {
+          return;
+        }
         this.highlightOverlay.remove();
       }
       const rect = element.getBoundingClientRect();
@@ -1235,6 +1384,112 @@
           }
         }, 5e3);
       }
+    }
+    showInlineElementDialog(elementId, elementInfo, element) {
+      const rect = element.getBoundingClientRect();
+      const dialog = document.createElement("div");
+      dialog.id = "web-augmenter-inline-dialog";
+      const showBelow = rect.bottom + 200 < window.innerHeight;
+      const top = showBelow ? rect.bottom + 10 : rect.top - 210;
+      const left = Math.min(Math.max(rect.left, 10), window.innerWidth - 410);
+      dialog.style.cssText = `
+      position: fixed;
+      top: ${top}px;
+      left: ${left}px;
+      background: white;
+      padding: 16px;
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+      z-index: 1000002;
+      width: 400px;
+      font-family: Arial, sans-serif;
+      animation: slideIn 0.2s ease-out;
+    `;
+      if (!document.getElementById("web-augmenter-animations")) {
+        const style = document.createElement("style");
+        style.id = "web-augmenter-animations";
+        style.textContent = `
+        @keyframes slideIn {
+          from {
+            opacity: 0;
+            transform: translateY(-10px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+      `;
+        document.head.appendChild(style);
+      }
+      dialog.innerHTML = `
+      <div style="margin-bottom: 12px;">
+        <div style="font-size: 14px; font-weight: 600; color: #333; margin-bottom: 8px;">\u2728 Edit this element</div>
+        <div style="font-size: 11px; color: #888; font-family: monospace;">${elementInfo.tagName}${elementInfo.id ? "#" + elementInfo.id : ""}</div>
+      </div>
+      <textarea 
+        id="augmenter-instruction" 
+        placeholder="What would you like to change?
+
+e.g., Change color to blue, Hide this, Make bigger..." 
+        style="width: 100%; height: 90px; padding: 10px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 13px; resize: none; box-sizing: border-box; font-family: Arial, sans-serif; outline: none; transition: border-color 0.2s;"
+        onfocus="this.style.borderColor='#007cba'"
+        onblur="this.style.borderColor='#e0e0e0'"
+      ></textarea>
+      <div style="margin-top: 12px; display: flex; gap: 8px; justify-content: flex-end;">
+        <button id="augmenter-cancel" style="padding: 8px 16px; background: #f5f5f5; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; color: #666; transition: background 0.2s;"
+          onmouseover="this.style.background='#e0e0e0'"
+          onmouseout="this.style.background='#f5f5f5'">Cancel</button>
+        <button id="augmenter-submit" style="padding: 8px 16px; background: #007cba; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; transition: background 0.2s;"
+          onmouseover="this.style.background='#005a8b'"
+          onmouseout="this.style.background='#007cba'">\u2728 Apply</button>
+      </div>
+    `;
+      document.body.appendChild(dialog);
+      const textarea = dialog.querySelector("#augmenter-instruction");
+      textarea?.focus();
+      dialog.querySelector("#augmenter-cancel")?.addEventListener("click", () => {
+        dialog.remove();
+        if (this.highlightOverlay) {
+          this.highlightOverlay.remove();
+          this.highlightOverlay = null;
+        }
+      });
+      dialog.querySelector("#augmenter-submit")?.addEventListener("click", async () => {
+        const instruction = textarea.value.trim();
+        if (!instruction) {
+          textarea.style.borderColor = "#f44336";
+          textarea.placeholder = "Please enter an instruction!";
+          setTimeout(() => {
+            textarea.style.borderColor = "#e0e0e0";
+          }, 2e3);
+          return;
+        }
+        const submitBtn = dialog.querySelector("#augmenter-submit");
+        if (submitBtn) {
+          submitBtn.disabled = true;
+          submitBtn.style.opacity = "0.6";
+          submitBtn.style.cursor = "not-allowed";
+          submitBtn.innerHTML = "\u23F3 Applying...";
+        }
+        this.isAugmenting = true;
+        dialog.remove();
+        try {
+          await this.augmentElement(elementId, instruction);
+        } finally {
+          this.isAugmenting = false;
+          if (this.highlightOverlay) {
+            this.highlightOverlay.remove();
+            this.highlightOverlay = null;
+          }
+        }
+      });
+      textarea.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          dialog.querySelector("#augmenter-submit")?.click();
+        }
+      });
     }
     showElementDialog(elementId, elementInfo) {
       const dialog = document.createElement("div");
@@ -1288,6 +1543,10 @@ Examples:
         }
         dialog.remove();
         await this.augmentElement(elementId, instruction);
+        if (this.highlightOverlay) {
+          this.highlightOverlay.remove();
+          this.highlightOverlay = null;
+        }
       });
     }
     async augmentElement(elementId, instruction) {
@@ -1425,6 +1684,92 @@ Please generate CSS and/or JavaScript to ${instruction}. Target the element usin
           }, 2e3);
         }
       });
+    }
+    toggleVisualEditingMode() {
+      this.visualEditingMode = !this.visualEditingMode;
+      if (this.visualEditingMode) {
+        this.enableVisualEditingMode();
+      } else {
+        this.disableVisualEditingMode();
+      }
+    }
+    enableVisualEditingMode() {
+      this.showNotification("\u{1F3A8} Visual Editing Mode Enabled - Click any element to edit it", "success");
+      this.visualModeOverlay = document.createElement("div");
+      this.visualModeOverlay.id = "web-augmenter-visual-mode-overlay";
+      this.visualModeOverlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 999997;
+      pointer-events: none;
+      background: rgba(0, 124, 186, 0.02);
+    `;
+      document.body.appendChild(this.visualModeOverlay);
+      this.visualModeIndicator = document.createElement("div");
+      this.visualModeIndicator.id = "web-augmenter-visual-indicator";
+      this.visualModeIndicator.style.cssText = `
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 12px 20px;
+      border-radius: 25px;
+      font-family: Arial, sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      z-index: 1000001;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    `;
+      this.visualModeIndicator.innerHTML = '\u{1F3A8} Visual Editing Mode <span style="opacity: 0.7; font-size: 11px; margin-left: 8px;">Alt+Drag to move \u2022 Click to edit \u2022 Click here to disable</span>';
+      this.visualModeIndicator.addEventListener("click", () => {
+        this.toggleVisualEditingMode();
+      });
+      document.body.appendChild(this.visualModeIndicator);
+      document.addEventListener("click", this.handleVisualModeClick, true);
+      document.addEventListener("mouseover", this.handleVisualModeHover, true);
+      document.addEventListener("mouseout", this.handleVisualModeOut, true);
+      document.addEventListener("mousedown", this.handleVisualModeDragStart, true);
+      document.addEventListener("mousemove", this.handleVisualModeDragMove, true);
+      document.addEventListener("mouseup", this.handleVisualModeDragEnd, true);
+    }
+    disableVisualEditingMode() {
+      this.showNotification("Visual Editing Mode Disabled", "info");
+      this.isAugmenting = false;
+      if (this.visualModeOverlay) {
+        this.visualModeOverlay.remove();
+        this.visualModeOverlay = null;
+      }
+      if (this.visualModeIndicator) {
+        this.visualModeIndicator.remove();
+        this.visualModeIndicator = null;
+      }
+      if (this.highlightOverlay) {
+        this.highlightOverlay.remove();
+        this.highlightOverlay = null;
+      }
+      const openDialog = document.querySelector('div[style*="position: fixed"][style*="transform: translate(-50%, -50%)"]');
+      if (openDialog && openDialog.textContent?.includes("What would you like to do")) {
+        openDialog.remove();
+      }
+      const inlineDialog = document.getElementById("web-augmenter-inline-dialog");
+      if (inlineDialog) {
+        inlineDialog.remove();
+      }
+      document.removeEventListener("click", this.handleVisualModeClick, true);
+      document.removeEventListener("mouseover", this.handleVisualModeHover, true);
+      document.removeEventListener("mouseout", this.handleVisualModeOut, true);
+      document.removeEventListener("mousedown", this.handleVisualModeDragStart, true);
+      document.removeEventListener("mousemove", this.handleVisualModeDragMove, true);
+      document.removeEventListener("mouseup", this.handleVisualModeDragEnd, true);
     }
     debounceReapply() {
       if (this.reapplyTimeout) {
