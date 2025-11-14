@@ -797,6 +797,11 @@
       this.dragElementStartX = 0;
       this.dragElementStartY = 0;
       this.dragGhost = null;
+      this.uiGenerationMode = false;
+      this.uiLocationBox = null;
+      this.uiDrawing = false;
+      this.uiDrawStartX = 0;
+      this.uiDrawStartY = 0;
       this.handleVisualModeClick = (e) => {
         const target = e.target;
         if (target.id?.startsWith("web-augmenter-") || target.closest("#web-augmenter-visual-indicator") || target.closest("#web-augmenter-inline-dialog") || target.closest('div[style*="position: fixed"][style*="transform: translate(-50%, -50%)"]')) {
@@ -916,6 +921,52 @@
         this.showNotification("\u2705 Element position saved and will persist on page reload!", "success");
       };
       this.reapplyTimeout = null;
+      this.handleUIDrawStart = (e) => {
+        this.uiDrawing = true;
+        this.uiDrawStartX = e.clientX;
+        this.uiDrawStartY = e.clientY;
+        this.uiLocationBox = document.createElement("div");
+        this.uiLocationBox.style.cssText = `
+      position: fixed;
+      border: 3px dashed #667eea;
+      background: rgba(102, 126, 234, 0.1);
+      z-index: 999999;
+      pointer-events: none;
+    `;
+        document.body.appendChild(this.uiLocationBox);
+      };
+      this.handleUIDrawMove = (e) => {
+        if (!this.uiDrawing || !this.uiLocationBox) return;
+        const currentX = e.clientX;
+        const currentY = e.clientY;
+        const left = Math.min(this.uiDrawStartX, currentX);
+        const top = Math.min(this.uiDrawStartY, currentY);
+        const width = Math.abs(currentX - this.uiDrawStartX);
+        const height = Math.abs(currentY - this.uiDrawStartY);
+        this.uiLocationBox.style.left = `${left}px`;
+        this.uiLocationBox.style.top = `${top}px`;
+        this.uiLocationBox.style.width = `${width}px`;
+        this.uiLocationBox.style.height = `${height}px`;
+      };
+      this.handleUIDrawEnd = async (e) => {
+        if (!this.uiDrawing || !this.uiLocationBox) return;
+        this.uiDrawing = false;
+        const currentX = e.clientX;
+        const currentY = e.clientY;
+        const left = Math.min(this.uiDrawStartX, currentX);
+        const top = Math.min(this.uiDrawStartY, currentY);
+        const width = Math.abs(currentX - this.uiDrawStartX);
+        const height = Math.abs(currentY - this.uiDrawStartY);
+        if (width < 50 || height < 50) {
+          this.showNotification("Area too small. Please draw a larger rectangle.", "error");
+          if (this.uiLocationBox) {
+            this.uiLocationBox.remove();
+            this.uiLocationBox = null;
+          }
+          return;
+        }
+        this.showUIGenerationDialog({ x: left, y: top, width, height });
+      };
       this.init();
     }
     isExtensionContextValid() {
@@ -939,9 +990,22 @@
         }
         this.setupMessageListeners();
         this.setupUtilityLibrary();
+        this.setupKeyboardShortcuts();
       } catch (error) {
         console.error("Web Augmenter: Failed to initialize content script:", error);
       }
+    }
+    setupKeyboardShortcuts() {
+      document.addEventListener("keydown", (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "E") {
+          e.preventDefault();
+          this.toggleVisualEditingMode();
+        }
+        if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === "U") {
+          e.preventDefault();
+          this.toggleUIGenerationMode();
+        }
+      });
     }
     onDOMReady() {
       this.isReady = true;
@@ -1977,6 +2041,160 @@ ${selector} {
         } catch (e) {
         }
       }, 3e3);
+    }
+    // UI Generation Mode Methods
+    toggleUIGenerationMode() {
+      this.uiGenerationMode = !this.uiGenerationMode;
+      if (this.uiGenerationMode) {
+        this.enableUIGenerationMode();
+      } else {
+        this.disableUIGenerationMode();
+      }
+    }
+    enableUIGenerationMode() {
+      this.showNotification("\u{1F3A8} UI Generation Mode - Draw a rectangle where you want to create UI", "success");
+      const overlay = document.createElement("div");
+      overlay.id = "web-augmenter-ui-gen-overlay";
+      overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 999998;
+      cursor: crosshair;
+      background: rgba(102, 126, 234, 0.05);
+    `;
+      document.body.appendChild(overlay);
+      const indicator = document.createElement("div");
+      indicator.id = "web-augmenter-ui-gen-indicator";
+      indicator.style.cssText = `
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 12px 20px;
+      border-radius: 25px;
+      font-family: Arial, sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      z-index: 1000001;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+      cursor: pointer;
+      user-select: none;
+    `;
+      indicator.innerHTML = '\u{1F3A8} UI Generation Mode <span style="opacity: 0.7; font-size: 11px; margin-left: 8px;">Draw rectangle \u2022 Click here to cancel</span>';
+      indicator.addEventListener("click", () => this.toggleUIGenerationMode());
+      document.body.appendChild(indicator);
+      overlay.addEventListener("mousedown", this.handleUIDrawStart);
+      document.addEventListener("mousemove", this.handleUIDrawMove);
+      document.addEventListener("mouseup", this.handleUIDrawEnd);
+    }
+    disableUIGenerationMode() {
+      this.showNotification("UI Generation Mode Disabled", "info");
+      const overlay = document.getElementById("web-augmenter-ui-gen-overlay");
+      if (overlay) overlay.remove();
+      const indicator = document.getElementById("web-augmenter-ui-gen-indicator");
+      if (indicator) indicator.remove();
+      if (this.uiLocationBox) {
+        this.uiLocationBox.remove();
+        this.uiLocationBox = null;
+      }
+      document.removeEventListener("mousemove", this.handleUIDrawMove);
+      document.removeEventListener("mouseup", this.handleUIDrawEnd);
+    }
+    showUIGenerationDialog(location) {
+      const dialog = document.createElement("div");
+      dialog.id = "web-augmenter-ui-gen-dialog";
+      dialog.style.cssText = `
+      position: fixed;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      background: white;
+      padding: 25px;
+      border-radius: 12px;
+      box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+      z-index: 1000002;
+      min-width: 400px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    `;
+      dialog.innerHTML = `
+      <h3 style="margin: 0 0 15px 0; color: #333;">Generate Custom UI</h3>
+      <p style="margin: 0 0 15px 0; color: #666; font-size: 14px;">
+        Location: (${Math.round(location.x)}, ${Math.round(location.y)}) \u2022 Size: ${Math.round(location.width)}\xD7${Math.round(location.height)}px
+      </p>
+      <textarea id="ui-gen-instruction" placeholder="Describe the UI you want to create...
+      
+Examples:
+\u2022 Create a floating notes widget
+\u2022 Add a timer with start/stop buttons
+\u2022 Make a todo list with checkboxes
+\u2022 Build a calculator
+\u2022 Create a color picker tool" 
+        style="width: 100%; height: 120px; padding: 10px; border: 2px solid #ddd; border-radius: 8px; 
+               font-family: inherit; font-size: 14px; resize: vertical; box-sizing: border-box;"></textarea>
+      <div style="display: flex; gap: 10px; margin-top: 15px;">
+        <button id="ui-gen-create" style="flex: 1; padding: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 14px;">
+          \u2728 Generate UI
+        </button>
+        <button id="ui-gen-cancel" style="padding: 12px 20px; background: #f5f5f5; color: #666; border: none; 
+                border-radius: 8px; cursor: pointer; font-size: 14px;">
+          Cancel
+        </button>
+      </div>
+    `;
+      document.body.appendChild(dialog);
+      const textarea = dialog.querySelector("#ui-gen-instruction");
+      textarea.focus();
+      dialog.querySelector("#ui-gen-create")?.addEventListener("click", async () => {
+        const instruction = textarea.value.trim();
+        if (!instruction) {
+          this.showNotification("Please describe the UI you want to create", "error");
+          return;
+        }
+        dialog.remove();
+        await this.generateUIAtLocation(instruction, location);
+      });
+      dialog.querySelector("#ui-gen-cancel")?.addEventListener("click", () => {
+        dialog.remove();
+        if (this.uiLocationBox) {
+          this.uiLocationBox.remove();
+          this.uiLocationBox = null;
+        }
+      });
+    }
+    async generateUIAtLocation(instruction, location) {
+      try {
+        this.showNotification("\u{1F916} Generating UI...", "info");
+        const response = await chrome.runtime.sendMessage({
+          type: "GENERATE_UI",
+          instruction,
+          location,
+          pageContext: {
+            url: window.location.href,
+            hostname: window.location.hostname,
+            domSummary: domSnapshotGenerator.generate()
+          }
+        });
+        if (response.error) {
+          throw new Error(response.error);
+        }
+        if (response.response) {
+          await patchInjector.injectPatches(response.response);
+          this.showNotification("\u2705 UI generated and saved!", "success");
+          if (this.uiLocationBox) {
+            this.uiLocationBox.remove();
+            this.uiLocationBox = null;
+          }
+          this.disableUIGenerationMode();
+        }
+      } catch (error) {
+        console.error("UI generation failed:", error);
+        this.showNotification(`Failed to generate UI: ${error instanceof Error ? error.message : "Unknown error"}`, "error");
+      }
     }
   };
   new ContentScript();

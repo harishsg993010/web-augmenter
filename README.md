@@ -9,11 +9,15 @@ Web Augmenter is a powerful Chrome extension that lets you modify any website us
 ## ✨ Features
 
 - **Natural Language Interface**: Describe changes in plain English
+- **AI UI Generation**: Draw anywhere on a page and generate fully functional UI components
+- **Visual Editing Mode**: Drag-and-drop elements to reposition them visually
 - **Custom Features**: Save and reuse your modifications across sites
 - **Auto-Apply**: Automatically apply saved features when visiting sites
 - **Screenshot Context**: Optional visual context for better AI understanding
 - **Local Persistence**: Your features and settings stay private on your device
 - **Universal Compatibility**: Works on any website using semantic detection
+- **Browser API Integration**: Generated UIs can use clipboard, geolocation, notifications, and more
+- **External API Support**: Create widgets that fetch real data from weather, news, crypto APIs
 
 ## 🚀 Quick Start
 
@@ -40,6 +44,12 @@ Web Augmenter is a powerful Chrome extension that lets you modify any website us
    - `"Pin the video player in the bottom corner"`
 3. **Click "Apply Changes"** and watch the magic happen!
 
+### Keyboard Shortcuts
+
+- **`Ctrl+Shift+E`** (or `Cmd+Shift+E` on Mac) - Toggle Visual Editing Mode
+- **`Ctrl+Shift+U`** (or `Cmd+Shift+U` on Mac) - Toggle UI Generation Mode
+- **`Esc`** - Exit current mode
+
 ## 🎯 Example Instructions
 
 ### Content Filtering
@@ -61,6 +71,62 @@ Web Augmenter is a powerful Chrome extension that lets you modify any website us
 - "Create a minimal Twitter interface"
 - "Add keyboard shortcuts for common actions"
 - "Organize content into a grid layout"
+
+## 🎨 UI Generation Mode
+
+**Generate fully functional UI components anywhere on any webpage!**
+
+### How to Use
+
+1. **Press `Ctrl+Shift+U`** (or `Cmd+Shift+U` on Mac) to activate UI Generation Mode
+2. **Draw a rectangle** on the page where you want your UI to appear
+3. **Describe what you want** in the dialog that appears
+4. **AI generates it** - fully functional, with real logic and data persistence
+5. **UI persists** across page reloads and is automatically saved
+
+### What You Can Generate
+
+#### Productivity Tools
+- **"Create a pomodoro timer"** → Real countdown with notifications and localStorage
+- **"Make a notes widget"** → Full note-taking with save/load/delete functionality
+- **"Build a todo list"** → Complete CRUD operations with checkboxes and persistence
+- **"Add a calculator"** → Fully functional calculator with keyboard support
+
+#### Data Widgets
+- **"Show Bitcoin price"** → Live crypto prices from CoinGecko API
+- **"Weather widget for London"** → Real weather data from OpenWeatherMap
+- **"Display latest tech news"** → Live news feed from NewsAPI
+- **"Stock ticker for AAPL"** → Real-time stock prices with auto-refresh
+
+#### Browser Tools
+- **"Clipboard manager"** → Uses real Clipboard API to copy/paste
+- **"Show my location"** → Uses Geolocation API to display coordinates
+- **"Screenshot tool"** → Capture and download page screenshots
+- **"Color picker"** → Extract colors from page elements
+
+#### Custom Utilities
+- **"Unit converter"** → Temperature, length, weight conversions
+- **"Text formatter"** → Uppercase, lowercase, title case, etc.
+- **"Countdown to New Year"** → Real-time countdown timer
+- **"Random quote generator"** → Fetch quotes from API
+
+### Key Features
+
+✅ **100% Functional** - Every button, input, and feature works completely
+✅ **Data Persistence** - Uses localStorage to save your data
+✅ **Real APIs** - Fetches live data from external APIs when requested
+✅ **Browser APIs** - Full access to Clipboard, Geolocation, Notifications, etc.
+✅ **Draggable** - Move widgets anywhere on the page
+✅ **Auto-saved** - Generated UIs persist across page reloads
+✅ **Modern Design** - Beautiful gradients, shadows, and animations
+
+### Visual Editing Mode
+
+**Press `Ctrl+Shift+E`** to enter Visual Editing Mode:
+- **Drag and drop** any element to reposition it
+- **Hover** to see element outlines
+- **Changes persist** automatically as custom features
+- Works on both page elements and generated UIs
 
 ## ⚙️ Configuration
 
@@ -232,12 +298,25 @@ npm run package
 
 ## 📋 Roadmap
 
+### ✅ Completed
+- [x] **Visual Editor**: Drag-and-drop element positioning (`Ctrl+Shift+E`)
+- [x] **UI Generation Mode**: AI-powered widget creation (`Ctrl+Shift+U`)
+- [x] **Browser API Integration**: Clipboard, Geolocation, Notifications support
+- [x] **External API Support**: Weather, crypto, news, and custom API integration
+- [x] **Element Persistence**: Auto-save moved elements and generated UIs
+
+### 🚧 In Progress
+- [ ] **Template Library**: Pre-built UI components and features
 - [ ] **Sharing Features**: Import/export feature libraries
-- [ ] **Visual Editor**: GUI for creating simple modifications
-- [ ] **Template Library**: Pre-built features for common use cases
+- [ ] **UI Component Gallery**: Browse and install community widgets
+
+### 🔮 Planned
 - [ ] **Batch Operations**: Apply multiple features simultaneously
-- [ ] **Performance Monitoring**: Track feature impact
+- [ ] **Performance Monitoring**: Track feature impact and optimization
 - [ ] **Cloud Sync**: Optional cloud storage for features
+- [ ] **Collaborative Features**: Share and remix community creations
+- [ ] **Advanced Selectors**: Visual selector picker for complex targeting
+- [ ] **Version Control**: Track changes and rollback features
 
 ## 🐛 Troubleshooting
 
@@ -262,6 +341,23 @@ npm run package
 - May not work on restricted pages (chrome://, extensions://)
 - Try disabling "Include screenshot context" as workaround
 
+**UI Generation not working**
+- Ensure you have a valid Anthropic API key configured
+- Check that you drew a rectangle large enough (minimum 50x50 pixels)
+- Verify the extension has permissions for the current site
+- Look for errors in the browser console (F12)
+
+**Generated UI not functional**
+- The AI should generate fully working code - if not, try being more specific
+- Example: Instead of "timer", say "pomodoro timer that counts down from 25 minutes"
+- Check browser console for JavaScript errors
+- Try regenerating with more detailed instructions
+
+**Generated UI disappeared**
+- Check if it was saved as a custom feature (should auto-save)
+- Verify the feature is enabled in the popup
+- The UI might be off-screen - try Visual Editing Mode to move it
+
 ### Debug Mode
 
 Enable Chrome DevTools for debugging:
@@ -285,6 +381,47 @@ MIT License - see [LICENSE](LICENSE) file for details.
 - **Chrome Extensions API** for the powerful platform
 - **TypeScript** for type safety and development experience
 - **Open source community** for inspiration and tools
+
+## 📖 Quick Reference
+
+### Modes
+
+| Mode | Shortcut | Purpose |
+|------|----------|---------|
+| **Normal Mode** | - | Use popup to modify page behavior |
+| **Visual Editing** | `Ctrl+Shift+E` | Drag and drop elements to reposition |
+| **UI Generation** | `Ctrl+Shift+U` | Draw and create custom UI widgets |
+
+### UI Generation Examples
+
+| What to Say | What You Get |
+|-------------|--------------|
+| "Create a pomodoro timer" | Fully functional 25-minute countdown timer with notifications |
+| "Make a notes widget" | Note-taking app with save/load/delete using localStorage |
+| "Show Bitcoin price" | Live BTC price from CoinGecko API with auto-refresh |
+| "Weather for London" | Real weather data with temperature and conditions |
+| "Clipboard manager" | Copy/paste tool using browser Clipboard API |
+| "Build a calculator" | Working calculator with all operations |
+| "Todo list" | Full CRUD todo app with checkboxes and persistence |
+
+### Available Browser APIs
+
+Generated UIs have full access to:
+- **localStorage/sessionStorage** - Data persistence
+- **Clipboard API** - Copy/paste functionality  
+- **Geolocation API** - Location tracking
+- **Notifications API** - Desktop notifications
+- **Fetch API** - HTTP requests to any endpoint
+- **File API** - File reading and handling
+- **Date/Time** - Timers and scheduling
+
+### Tips for Best Results
+
+1. **Be specific**: "Pomodoro timer with 25-minute countdown" > "timer"
+2. **Mention APIs**: "Weather widget using OpenWeatherMap" gets real data
+3. **Specify behavior**: "Notes that auto-save to localStorage" ensures persistence
+4. **Request features**: "Calculator with keyboard support" adds extra functionality
+5. **Use Visual Mode**: After generating, press `Ctrl+Shift+E` to reposition
 
 ---
 

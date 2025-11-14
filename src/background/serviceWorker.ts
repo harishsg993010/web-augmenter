@@ -3,7 +3,8 @@ import {
   MessageFromBackground,
   MessageToContent,
   WebFeatureResponse,
-  PageContext
+  PageContext,
+  CustomFeature
 } from '../shared/types.js';
 import { MESSAGE_TYPES } from '../shared/constants.js';
 import { llmClient } from '../shared/llmClient.js';
@@ -91,6 +92,9 @@ class BackgroundService {
         case 'INJECT_SCRIPT_VIA_API':
           return await this.handleInjectScriptViaAPI(message, sender);
 
+        case 'GENERATE_UI':
+          return await this.handleGenerateUI(message, sender);
+
         default:
           console.warn('Unknown message type:', message.type);
           return undefined;
@@ -150,6 +154,76 @@ class BackgroundService {
       return {
         type: MESSAGE_TYPES.ERROR,
         error: error instanceof Error ? error.message : 'Failed to process request'
+      };
+    }
+  }
+
+  private async handleGenerateUI(
+    message: any,
+    sender: chrome.runtime.MessageSender
+  ): Promise<any> {
+    try {
+      const { instruction, location, pageContext } = message;
+
+      console.log('Generating UI at location:', location);
+
+      // Update LLM client config with latest API key
+      await this.updateLLMClientConfig();
+
+      // Get screenshot for better context
+      let screenshotBase64: string | undefined;
+      try {
+        screenshotBase64 = await screenshotCapture.captureWithRetry() || undefined;
+      } catch (error) {
+        console.warn('Screenshot capture failed, continuing without it:', error);
+      }
+
+      // Call LLM to generate UI
+      const response = await llmClient.generateUIAtLocation(
+        instruction,
+        location,
+        pageContext,
+        screenshotBase64
+      );
+
+      // Save as a custom feature
+      const feature: CustomFeature = {
+        id: `ui_gen_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        name: `Custom UI: ${instruction.substring(0, 50)}`,
+        scope: {
+          type: 'hostname',
+          value: pageContext.hostname
+        },
+        script: response.script,
+        css: response.css,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        autoApply: true,
+        description: `Generated UI at (${Math.round(location.x)}, ${Math.round(location.y)})`,
+        tags: ['ui-generation', 'custom-ui']
+      };
+
+      await persistence.saveCustomFeature(feature);
+
+      // Inject immediately
+      if (sender.tab?.id) {
+        chrome.tabs.sendMessage(sender.tab.id, {
+          type: MESSAGE_TYPES.INJECT_PATCHES,
+          patches: response
+        } as MessageToContent);
+      }
+
+      return {
+        type: 'UI_GENERATED',
+        response,
+        feature
+      };
+
+    } catch (error) {
+      console.error('Error generating UI:', error);
+      return {
+        type: MESSAGE_TYPES.ERROR,
+        error: error instanceof Error ? error.message : 'Failed to generate UI'
       };
     }
   }

@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
 import { LLMRequest, WebFeatureResponse, PageContext } from './types.js';
-import { WEB_FEATURE_BUILDER_SYSTEM_PROMPT } from './constants.js';
+import { WEB_FEATURE_BUILDER_SYSTEM_PROMPT, UI_GENERATOR_SYSTEM_PROMPT } from './constants.js';
 import { 
   countMessageTokens, 
   logTokenUsage, 
@@ -73,6 +73,32 @@ class LLMClient {
     }
   }
 
+  async generateUIAtLocation(
+    userInstruction: string, 
+    location: { x: number; y: number; width: number; height: number },
+    pageContext: PageContext,
+    screenshotBase64?: string
+  ): Promise<WebFeatureResponse> {
+    try {
+      // Use the same Anthropic client but with UI-specific system prompt
+      const messages = this.buildUIGenerationMessages(userInstruction, location, pageContext, screenshotBase64);
+      const response = await this.makeAnthropicAPICall(messages, undefined, UI_GENERATOR_SYSTEM_PROMPT);
+      return this.parseResponse(response);
+    } catch (error) {
+      console.error('UI generation failed:', error);
+      
+      if (error instanceof Anthropic.AuthenticationError) {
+        throw new Error('Invalid API key. Please check your Anthropic API key in settings.');
+      } else if (error instanceof Anthropic.RateLimitError) {
+        throw new Error('Rate limit exceeded. Please try again later.');
+      } else if (error instanceof Anthropic.APIConnectionError) {
+        throw new Error('Unable to connect to Anthropic API. Please check your internet connection.');
+      } else {
+        throw new Error(`UI generation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
+    }
+  }
+
   private buildPageContextText(userInstruction: string, pageContext: PageContext, maxElements: number): string {
     return `Please analyze this web page and implement the user's request.
 
@@ -107,6 +133,71 @@ ${pageContext.domSummary.elements.slice(0, maxElements).map(el => {
 - read_page_source(start, end) - Read HTML source lines
 
 Please respond with valid JSON following the exact schema specified in the system prompt.`;
+  }
+
+  private buildUIGenerationMessages(
+    userInstruction: string,
+    location: { x: number; y: number; width: number; height: number },
+    pageContext: PageContext,
+    screenshotBase64?: string
+  ): Anthropic.MessageParam[] {
+    const content: Anthropic.MessageParam['content'] = [];
+
+    const textContent = `You are a UI generator. Create a custom UI component at a specific location on the webpage.
+
+User Request: "${userInstruction}"
+
+Target Location:
+- X: ${location.x}px from left
+- Y: ${location.y}px from top  
+- Width: ${location.width}px
+- Height: ${location.height}px
+
+Page Context:
+- URL: ${pageContext.url}
+- Hostname: ${pageContext.hostname}
+- Title: ${pageContext.domSummary.title}
+
+Your task:
+1. Create HTML/CSS/JavaScript for a UI component that fits in the specified location
+2. The component should be positioned at the exact coordinates using fixed or absolute positioning
+3. Make it visually appealing with modern design (use gradients, shadows, rounded corners)
+4. Ensure it's responsive and doesn't break the page layout
+5. Add any necessary event listeners and interactivity
+
+Important:
+- Use position: fixed with the exact coordinates provided
+- Set z-index high enough to appear above page content (e.g., 999999)
+- Include all necessary styling inline or in the CSS field
+- Make it draggable if appropriate
+- Add a close/minimize button if it's a panel or widget
+
+Please respond with valid JSON following the exact schema specified in the system prompt.`;
+
+    content.push({
+      type: 'text',
+      text: textContent
+    });
+
+    // Add screenshot if available (very helpful for UI generation)
+    if (screenshotBase64) {
+      const base64Data = screenshotBase64.replace(/^data:image\/[^;]+;base64,/, '');
+      content.push({
+        type: 'image',
+        source: {
+          type: 'base64',
+          media_type: 'image/png',
+          data: base64Data
+        }
+      });
+    }
+
+    return [
+      {
+        role: 'user',
+        content: content
+      }
+    ];
   }
 
   private buildMessages(userInstruction: string, pageContext: PageContext, screenshotBase64?: string): Anthropic.MessageParam[] {
@@ -160,13 +251,17 @@ Please respond with valid JSON following the exact schema specified in the syste
     ];
   }
 
-  private async makeAnthropicAPICall(messages: Anthropic.MessageParam[], tabId?: number): Promise<string> {
+  private async makeAnthropicAPICall(
+    messages: Anthropic.MessageParam[], 
+    tabId?: number,
+    systemPrompt: string = WEB_FEATURE_BUILDER_SYSTEM_PROMPT
+  ): Promise<string> {
     if (!this.anthropic) {
       throw new Error('Anthropic client not initialized');
     }
 
     // Count tokens BEFORE making the API call
-    const tokenCount = countMessageTokens(messages, WEB_FEATURE_BUILDER_SYSTEM_PROMPT);
+    const tokenCount = countMessageTokens(messages, systemPrompt);
     logTokenUsage(tokenCount, 'Initial request');
 
     // Check if we're within the token limit
@@ -284,7 +379,7 @@ Please respond with valid JSON following the exact schema specified in the syste
 
       // Check token count before each iteration
       if (iteration > 1) {
-        const iterationTokenCount = countMessageTokens(currentMessages, WEB_FEATURE_BUILDER_SYSTEM_PROMPT);
+        const iterationTokenCount = countMessageTokens(currentMessages, systemPrompt);
         logTokenUsage(iterationTokenCount, `Iteration ${iteration}`);
         
         if (!iterationTokenCount.withinLimit) {
@@ -300,7 +395,7 @@ Please respond with valid JSON following the exact schema specified in the syste
       const response = await this.anthropic.messages.create({
         model: this.config.model!,
         max_tokens: 4000,
-        system: WEB_FEATURE_BUILDER_SYSTEM_PROMPT,
+        system: systemPrompt,
         messages: currentMessages,
         tools: tools
       });
