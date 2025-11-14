@@ -1305,7 +1305,7 @@ Please generate CSS and/or JavaScript to ${instruction}. Target the element usin
     this.dragGhost.style.top = `${this.dragElementStartY + deltaY}px`;
   };
 
-  private handleVisualModeDragEnd = (e: MouseEvent): void => {
+  private handleVisualModeDragEnd = async (e: MouseEvent): Promise<void> => {
     if (!this.isDragging || !this.draggedElement) {
       return;
     }
@@ -1320,8 +1320,14 @@ Please generate CSS and/or JavaScript to ${instruction}. Target the element usin
     const currentLeft = parseFloat(this.draggedElement.style.left || '0');
     const currentTop = parseFloat(this.draggedElement.style.top || '0');
     
-    this.draggedElement.style.left = `${currentLeft + deltaX}px`;
-    this.draggedElement.style.top = `${currentTop + deltaY}px`;
+    const newLeft = currentLeft + deltaX;
+    const newTop = currentTop + deltaY;
+    
+    this.draggedElement.style.left = `${newLeft}px`;
+    this.draggedElement.style.top = `${newTop}px`;
+    
+    // Save the position as a persistent feature
+    await this.saveElementPosition(this.draggedElement, newLeft, newTop);
     
     // Clean up
     if (this.dragGhost) {
@@ -1334,8 +1340,115 @@ Please generate CSS and/or JavaScript to ${instruction}. Target the element usin
     this.isDragging = false;
     this.draggedElement = null;
     
-    this.showNotification('Element moved! Position saved.', 'success');
+    this.showNotification('✅ Element position saved and will persist on page reload!', 'success');
   };
+
+  private async saveElementPosition(element: HTMLElement, left: number, top: number): Promise<void> {
+    try {
+      // Generate a unique and stable selector for the element
+      const selector = this.generateStableSelector(element);
+      
+      if (!selector) {
+        console.warn('Could not generate stable selector for element');
+        return;
+      }
+      
+      // Get current position style to preserve it
+      const computedStyle = window.getComputedStyle(element);
+      const currentPosition = computedStyle.position;
+      
+      // Generate CSS to persist the position
+      const css = `
+/* Element position saved from visual editing mode */
+${selector} {
+  position: ${currentPosition === 'static' ? 'relative' : currentPosition} !important;
+  left: ${left}px !important;
+  top: ${top}px !important;
+}`;
+      
+      // Create a custom feature for this position
+      const featureId = `position_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+      const feature: CustomFeature = {
+        id: featureId,
+        name: `Element Position: ${selector.substring(0, 50)}`,
+        scope: {
+          type: 'hostname',
+          value: window.location.hostname
+        },
+        script: '', // No script needed, just CSS
+        css: css,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        autoApply: true,
+        description: `Saved position for element at (${Math.round(left)}px, ${Math.round(top)}px)`,
+        tags: ['visual-editing', 'position']
+      };
+      
+      // Save the feature
+      await persistence.saveCustomFeature(feature);
+      
+      console.log('Element position saved:', { selector, left, top });
+    } catch (error) {
+      console.error('Failed to save element position:', error);
+      this.showNotification('Failed to save position', 'error');
+    }
+  }
+
+  private generateStableSelector(element: HTMLElement): string | null {
+    // Try ID first (most stable)
+    if (element.id) {
+      return `#${CSS.escape(element.id)}`;
+    }
+    
+    // Try unique class combination
+    if (element.className && typeof element.className === 'string') {
+      const classes = element.className.trim().split(/\s+/).filter(c => c);
+      if (classes.length > 0) {
+        const classSelector = '.' + classes.map(c => CSS.escape(c)).join('.');
+        // Check if it's unique enough
+        const matches = document.querySelectorAll(classSelector);
+        if (matches.length === 1) {
+          return classSelector;
+        }
+      }
+    }
+    
+    // Try data attributes
+    for (const attr of element.attributes) {
+      if (attr.name.startsWith('data-') && attr.value) {
+        const selector = `[${attr.name}="${CSS.escape(attr.value)}"]`;
+        const matches = document.querySelectorAll(selector);
+        if (matches.length === 1) {
+          return selector;
+        }
+      }
+    }
+    
+    // Fall back to nth-child with parent context
+    const parent = element.parentElement;
+    if (parent) {
+      const siblings = Array.from(parent.children);
+      const index = siblings.indexOf(element);
+      const tagName = element.tagName.toLowerCase();
+      
+      // Get parent selector
+      let parentSelector = '';
+      if (parent.id) {
+        parentSelector = `#${CSS.escape(parent.id)}`;
+      } else if (parent.className && typeof parent.className === 'string') {
+        const parentClasses = parent.className.trim().split(/\s+/).filter(c => c);
+        if (parentClasses.length > 0) {
+          parentSelector = '.' + parentClasses.map(c => CSS.escape(c)).join('.');
+        }
+      } else {
+        parentSelector = parent.tagName.toLowerCase();
+      }
+      
+      return `${parentSelector} > ${tagName}:nth-child(${index + 1})`;
+    }
+    
+    return null;
+  }
 
   private reapplyTimeout: number | null = null;
 

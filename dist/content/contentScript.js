@@ -891,7 +891,7 @@
         this.dragGhost.style.left = `${this.dragElementStartX + deltaX}px`;
         this.dragGhost.style.top = `${this.dragElementStartY + deltaY}px`;
       };
-      this.handleVisualModeDragEnd = (e) => {
+      this.handleVisualModeDragEnd = async (e) => {
         if (!this.isDragging || !this.draggedElement) {
           return;
         }
@@ -901,8 +901,11 @@
         const deltaY = e.clientY - this.dragStartY;
         const currentLeft = parseFloat(this.draggedElement.style.left || "0");
         const currentTop = parseFloat(this.draggedElement.style.top || "0");
-        this.draggedElement.style.left = `${currentLeft + deltaX}px`;
-        this.draggedElement.style.top = `${currentTop + deltaY}px`;
+        const newLeft = currentLeft + deltaX;
+        const newTop = currentTop + deltaY;
+        this.draggedElement.style.left = `${newLeft}px`;
+        this.draggedElement.style.top = `${newTop}px`;
+        await this.saveElementPosition(this.draggedElement, newLeft, newTop);
         if (this.dragGhost) {
           this.dragGhost.remove();
           this.dragGhost = null;
@@ -910,7 +913,7 @@
         document.body.style.cursor = "";
         this.isDragging = false;
         this.draggedElement = null;
-        this.showNotification("Element moved! Position saved.", "success");
+        this.showNotification("\u2705 Element position saved and will persist on page reload!", "success");
       };
       this.reapplyTimeout = null;
       this.init();
@@ -1770,6 +1773,89 @@ Please generate CSS and/or JavaScript to ${instruction}. Target the element usin
       document.removeEventListener("mousedown", this.handleVisualModeDragStart, true);
       document.removeEventListener("mousemove", this.handleVisualModeDragMove, true);
       document.removeEventListener("mouseup", this.handleVisualModeDragEnd, true);
+    }
+    async saveElementPosition(element, left, top) {
+      try {
+        const selector = this.generateStableSelector(element);
+        if (!selector) {
+          console.warn("Could not generate stable selector for element");
+          return;
+        }
+        const computedStyle = window.getComputedStyle(element);
+        const currentPosition = computedStyle.position;
+        const css = `
+/* Element position saved from visual editing mode */
+${selector} {
+  position: ${currentPosition === "static" ? "relative" : currentPosition} !important;
+  left: ${left}px !important;
+  top: ${top}px !important;
+}`;
+        const featureId = `position_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const feature = {
+          id: featureId,
+          name: `Element Position: ${selector.substring(0, 50)}`,
+          scope: {
+            type: "hostname",
+            value: window.location.hostname
+          },
+          script: "",
+          // No script needed, just CSS
+          css,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          autoApply: true,
+          description: `Saved position for element at (${Math.round(left)}px, ${Math.round(top)}px)`,
+          tags: ["visual-editing", "position"]
+        };
+        await persistence.saveCustomFeature(feature);
+        console.log("Element position saved:", { selector, left, top });
+      } catch (error) {
+        console.error("Failed to save element position:", error);
+        this.showNotification("Failed to save position", "error");
+      }
+    }
+    generateStableSelector(element) {
+      if (element.id) {
+        return `#${CSS.escape(element.id)}`;
+      }
+      if (element.className && typeof element.className === "string") {
+        const classes = element.className.trim().split(/\s+/).filter((c) => c);
+        if (classes.length > 0) {
+          const classSelector = "." + classes.map((c) => CSS.escape(c)).join(".");
+          const matches = document.querySelectorAll(classSelector);
+          if (matches.length === 1) {
+            return classSelector;
+          }
+        }
+      }
+      for (const attr of element.attributes) {
+        if (attr.name.startsWith("data-") && attr.value) {
+          const selector = `[${attr.name}="${CSS.escape(attr.value)}"]`;
+          const matches = document.querySelectorAll(selector);
+          if (matches.length === 1) {
+            return selector;
+          }
+        }
+      }
+      const parent = element.parentElement;
+      if (parent) {
+        const siblings = Array.from(parent.children);
+        const index = siblings.indexOf(element);
+        const tagName = element.tagName.toLowerCase();
+        let parentSelector = "";
+        if (parent.id) {
+          parentSelector = `#${CSS.escape(parent.id)}`;
+        } else if (parent.className && typeof parent.className === "string") {
+          const parentClasses = parent.className.trim().split(/\s+/).filter((c) => c);
+          if (parentClasses.length > 0) {
+            parentSelector = "." + parentClasses.map((c) => CSS.escape(c)).join(".");
+          }
+        } else {
+          parentSelector = parent.tagName.toLowerCase();
+        }
+        return `${parentSelector} > ${tagName}:nth-child(${index + 1})`;
+      }
+      return null;
     }
     debounceReapply() {
       if (this.reapplyTimeout) {
