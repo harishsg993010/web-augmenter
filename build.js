@@ -37,7 +37,7 @@ function fixManifestPaths() {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 
   // Fix paths to be relative to dist folder
-  manifest.action.default_popup = 'popup/popup.html';
+  manifest.side_panel.default_path = 'popup/popup.html';
   manifest.background.service_worker = 'background/serviceWorker.js';
   manifest.background.type = 'module'; // Service workers support ES modules
   manifest.content_scripts[0].js = ['content/contentScript.js'];

@@ -1,6 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { z } from 'zod';
-import { LLMRequest, WebFeatureResponse, PageContext } from './types.js';
+import { LLMRequest, WebFeatureResponse, PageContext, PageStyles } from './types.js';
 import { WEB_FEATURE_BUILDER_SYSTEM_PROMPT, UI_GENERATOR_SYSTEM_PROMPT } from './constants.js';
 import { 
   countMessageTokens, 
@@ -74,14 +74,15 @@ class LLMClient {
   }
 
   async generateUIAtLocation(
-    userInstruction: string, 
+    userInstruction: string,
     location: { x: number; y: number; width: number; height: number },
     pageContext: PageContext,
-    screenshotBase64?: string
+    screenshotBase64?: string,
+    pageStyles?: PageStyles
   ): Promise<WebFeatureResponse> {
     try {
       // Use the same Anthropic client but with UI-specific system prompt
-      const messages = this.buildUIGenerationMessages(userInstruction, location, pageContext, screenshotBase64);
+      const messages = this.buildUIGenerationMessages(userInstruction, location, pageContext, screenshotBase64, pageStyles);
       const response = await this.makeAnthropicAPICall(messages, undefined, UI_GENERATOR_SYSTEM_PROMPT);
       return this.parseResponse(response);
     } catch (error) {
@@ -135,13 +136,50 @@ ${pageContext.domSummary.elements.slice(0, maxElements).map(el => {
 Please respond with valid JSON following the exact schema specified in the system prompt.`;
   }
 
+  private formatPageStyles(pageStyles: PageStyles): string {
+    const lines: string[] = ['Page Design System:'];
+
+    const varEntries = Object.entries(pageStyles.cssVariables);
+    if (varEntries.length > 0) {
+      lines.push('CSS Variables:');
+      for (const [name, value] of varEntries.slice(0, 60)) {
+        lines.push(`  ${name}: ${value}`);
+      }
+    }
+
+    if (pageStyles.elements.length > 0) {
+      lines.push('Element Styles:');
+      for (const el of pageStyles.elements) {
+        const parts = [
+          el.color !== 'rgba(0, 0, 0, 0)' && el.color ? `color=${el.color}` : null,
+          el.backgroundColor !== 'rgba(0, 0, 0, 0)' && el.backgroundColor ? `bg=${el.backgroundColor}` : null,
+          el.fontFamily ? `font=${el.fontFamily.split(',')[0].replace(/['"]/g, '')}` : null,
+          el.fontSize ? `${el.fontSize}` : null,
+          el.fontWeight && el.fontWeight !== '400' ? `weight=${el.fontWeight}` : null,
+          el.borderRadius && el.borderRadius !== '0px' ? `radius=${el.borderRadius}` : null,
+          el.boxShadow && el.boxShadow !== 'none' ? `shadow=${el.boxShadow}` : null,
+        ].filter(Boolean);
+        if (parts.length > 0) {
+          lines.push(`  ${el.selector}: ${parts.join(', ')}`);
+        }
+      }
+    }
+
+    return lines.join('\n');
+  }
+
   private buildUIGenerationMessages(
     userInstruction: string,
     location: { x: number; y: number; width: number; height: number },
     pageContext: PageContext,
-    screenshotBase64?: string
+    screenshotBase64?: string,
+    pageStyles?: PageStyles
   ): Anthropic.MessageParam[] {
     const content: Anthropic.MessageParam['content'] = [];
+
+    const stylesSection = pageStyles
+      ? `\n\n${this.formatPageStyles(pageStyles)}`
+      : '';
 
     const textContent = `You are a UI generator. Create a custom UI component at a specific location on the webpage.
 
@@ -149,19 +187,19 @@ User Request: "${userInstruction}"
 
 Target Location:
 - X: ${location.x}px from left
-- Y: ${location.y}px from top  
+- Y: ${location.y}px from top
 - Width: ${location.width}px
 - Height: ${location.height}px
 
 Page Context:
 - URL: ${pageContext.url}
 - Hostname: ${pageContext.hostname}
-- Title: ${pageContext.domSummary.title}
+- Title: ${pageContext.domSummary.title}${stylesSection}
 
 Your task:
 1. Create HTML/CSS/JavaScript for a UI component that fits in the specified location
 2. The component should be positioned at the exact coordinates using fixed or absolute positioning
-3. Make it visually appealing with modern design (use gradients, shadows, rounded corners)
+3. Match the host page's design system using the styles above — use its colors, fonts, and border-radius values
 4. Ensure it's responsive and doesn't break the page layout
 5. Add any necessary event listeners and interactivity
 

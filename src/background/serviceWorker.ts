@@ -17,7 +17,7 @@ class BackgroundService {
   constructor() {
     this.checkUserScriptsAvailability();
     this.setupMessageListeners();
-    this.setupContextMenus();
+    this.setupSidePanel();
     this.setupStorageListener();
   }
 
@@ -158,6 +158,18 @@ class BackgroundService {
     }
   }
 
+  private urlToPattern(url: string): string {
+    try {
+      const parsed = new URL(url);
+      const base = parsed.origin + parsed.pathname;
+      const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // Match this exact path only — allow query/hash/end but not additional path segments
+      return '^' + escaped + '([?#]|$)';
+    } catch {
+      return url;
+    }
+  }
+
   private async handleGenerateUI(
     message: any,
     sender: chrome.runtime.MessageSender
@@ -183,7 +195,8 @@ class BackgroundService {
         instruction,
         location,
         pageContext,
-        screenshotBase64
+        screenshotBase64,
+        pageContext.pageStyles
       );
 
       // Save as a custom feature
@@ -191,8 +204,8 @@ class BackgroundService {
         id: `ui_gen_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         name: `Custom UI: ${instruction.substring(0, 50)}`,
         scope: {
-          type: 'hostname',
-          value: pageContext.hostname
+          type: 'urlPattern',
+          value: this.urlToPattern(pageContext.url)
         },
         script: response.script,
         css: response.css,
@@ -286,15 +299,14 @@ class BackgroundService {
         id: featureId,
         name: response.high_level_goal || 'Auto-generated feature',
         scope: {
-          type: 'hostname' as const,
-          value: hostname
+          type: 'urlPattern' as const,
+          value: this.urlToPattern(pageContext.url)
         },
         script: response.script || '',
         css: response.css || '',
         createdAt: Date.now(),
         updatedAt: Date.now(),
-        autoApply: true, // Enable auto-apply by default
-        description: `Generated from: "${pageContext.userInstruction}"`,
+        autoApply: true,
         tags: ['auto-generated']
       };
 
@@ -329,13 +341,12 @@ class BackgroundService {
 
   private async handleToggleFeatureAutoApply(message: any): Promise<any> {
     try {
-      const { featureId, hostname, enabled } = message;
-      await persistence.setAutoApply(featureId, hostname, enabled);
+      const { featureId, enabled } = message;
+      await persistence.updateCustomFeature(featureId, { autoApply: enabled });
 
       return {
         type: 'AUTO_APPLY_TOGGLED',
         featureId,
-        hostname,
         enabled
       };
     } catch (error) {
@@ -458,42 +469,32 @@ class BackgroundService {
     }
   }
 
-  private setupContextMenus(): void {
-    chrome.runtime.onInstalled.addListener(() => {
-      chrome.contextMenus.create({
-        id: 'web-augmenter-add-element',
-        title: 'Add to Augmenter',
-        contexts: ['all']
-      });
+  private setupSidePanel(): void {
+    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 
-      chrome.contextMenus.create({
-        id: 'web-augmenter-visual-mode',
-        title: '🎨 Enable Visual Editing Mode',
-        contexts: ['page']
-      });
+    chrome.tabs.onActivated.addListener(async (activeInfo) => {
+      try {
+        await chrome.sidePanel.close({ windowId: activeInfo.windowId });
+      } catch {
+        // Panel may already be closed
+      }
     });
 
-    chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-      if (info.menuItemId === 'web-augmenter-add-element' && tab?.id) {
-        // Send message to content script to capture selected element
-        try {
-          chrome.tabs.sendMessage(tab.id, {
-            type: 'ADD_ELEMENT_TO_AUGMENTER',
-            selectionText: info.selectionText
-          });
-        } catch (error) {
-          console.warn('Could not send add element message:', error);
+    chrome.runtime.onConnect.addListener((port) => {
+      if (port.name !== 'side-panel') return;
+      let tabId: number | null = null;
+
+      port.onMessage.addListener((msg) => {
+        if (msg.type === 'SIDE_PANEL_TAB' && typeof msg.tabId === 'number') {
+          tabId = msg.tabId;
         }
-      } else if (info.menuItemId === 'web-augmenter-visual-mode' && tab?.id) {
-        // Toggle visual editing mode
-        try {
-          chrome.tabs.sendMessage(tab.id, {
-            type: 'TOGGLE_VISUAL_EDITING_MODE'
-          });
-        } catch (error) {
-          console.warn('Could not toggle visual editing mode:', error);
+      });
+
+      port.onDisconnect.addListener(() => {
+        if (tabId !== null) {
+          chrome.tabs.sendMessage(tabId, { type: 'SIDE_PANEL_CLOSED' }).catch(() => {});
         }
-      }
+      });
     });
   }
 

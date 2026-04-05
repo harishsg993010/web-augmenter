@@ -65,12 +65,30 @@ export interface ElementInfo {
   };
 }
 
+export interface PageStyleElement {
+  selector: string;
+  color: string;
+  backgroundColor: string;
+  fontFamily: string;
+  fontSize: string;
+  fontWeight: string;
+  borderRadius: string;
+  border: string;
+  boxShadow: string;
+}
+
+export interface PageStyles {
+  cssVariables: Record<string, string>;
+  elements: PageStyleElement[];
+}
+
 export interface PageContext {
   domSummary: DOMSnapshot;
   url: string;
   hostname: string;
   userInstruction: string;
   screenshotBase64?: string;
+  pageStyles?: PageStyles;
 }
 
 export interface LLMRequest {

@@ -78,7 +78,11 @@ class PersistenceManager {
     }
 
     return allFeatures.filter(feature => {
-      // Check if feature is set to auto-apply
+      // Explicitly disabled features never apply
+      if (feature.autoApply === false) {
+        return false;
+      }
+      // Features not globally enabled must be in the site's allow-list
       if (!feature.autoApply && !siteSettings?.autoApplyFeatures?.includes(feature.id)) {
         return false;
       }
