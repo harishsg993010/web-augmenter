@@ -178,10 +178,7 @@ class PopupUI {
 
   // ---- Context tag ----
 
-  private readonly modeHintText: Partial<Record<Mode, string>> = {
-    inspect: 'Click an element on the page',
-    draw: 'Draw a rectangle on the page',
-  };
+  private readonly modeHintText: Partial<Record<Mode, string>> = {};
 
   private updateModeHint(): void {
     const hint = this.get('modeHint');

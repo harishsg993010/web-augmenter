@@ -172,7 +172,7 @@ body {
     border-top: 1px solid #e8e8e8;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 8px;
 }
 
 /* ---- Mode tabs (segmented control) ---- */
@@ -209,9 +209,9 @@ body {
 }
 
 .mode-tab.active.mode-active-page {
-    background: #6366f1;
-    color: white;
-    box-shadow: 0 1px 4px rgba(99,102,241,0.35);
+    background: white;
+    color: #6366f1;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
 }
 
 /* ---- Context tag pill ---- */
@@ -261,7 +261,7 @@ body {
 .input-row textarea {
     flex: 1;
     background: white;
-    border: 2px solid #6366f1;
+    border: 2px solid #e0e0e0;
     border-radius: 12px;
     font-size: 13px;
     font-family: inherit;

@@ -1125,7 +1125,8 @@ Please generate CSS and/or JavaScript to ${instruction}. Target the element usin
       bottom: 0;
       z-index: 999997;
       pointer-events: none;
-      background: rgba(0, 124, 186, 0.02);
+      background: transparent;
+      box-shadow: inset 0 0 0 3px #6366f1;
     `;
     document.body.appendChild(this.visualModeOverlay);
 
@@ -1604,7 +1605,8 @@ ${selector} {
       bottom: 0;
       z-index: 999998;
       cursor: crosshair;
-      background: rgba(102, 126, 234, 0.05);
+      background: transparent;
+      box-shadow: inset 0 0 0 3px #6366f1;
     `;
     document.body.appendChild(overlay);
 
