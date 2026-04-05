@@ -4,8 +4,10 @@
   "version": "0.1.0",
   "description": "Turn any website into a programmable surface using natural language.",
   "action": {
-    "default_popup": "src/popup/popup.html",
     "default_title": "Web Augmenter"
+  },
+  "side_panel": {
+    "default_path": "src/popup/popup.html"
   },
   "background": {
     "service_worker": "src/background/serviceWorker.js"
@@ -23,7 +25,7 @@
     "activeTab",
     "tabs",
     "storage",
-    "contextMenus"
+    "sidePanel"
   ],
   "host_permissions": [
     "<all_urls>"

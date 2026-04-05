@@ -17,7 +17,7 @@ class BackgroundService {
   constructor() {
     this.checkUserScriptsAvailability();
     this.setupMessageListeners();
-    this.setupContextMenus();
+    this.setupSidePanel();
     this.setupStorageListener();
   }
 
@@ -293,8 +293,7 @@ class BackgroundService {
         css: response.css || '',
         createdAt: Date.now(),
         updatedAt: Date.now(),
-        autoApply: true, // Enable auto-apply by default
-        description: `Generated from: "${pageContext.userInstruction}"`,
+        autoApply: true,
         tags: ['auto-generated']
       };
 
@@ -458,41 +457,14 @@ class BackgroundService {
     }
   }
 
-  private setupContextMenus(): void {
-    chrome.runtime.onInstalled.addListener(() => {
-      chrome.contextMenus.create({
-        id: 'web-augmenter-add-element',
-        title: 'Add to Augmenter',
-        contexts: ['all']
-      });
+  private setupSidePanel(): void {
+    chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true });
 
-      chrome.contextMenus.create({
-        id: 'web-augmenter-visual-mode',
-        title: '🎨 Enable Visual Editing Mode',
-        contexts: ['page']
-      });
-    });
-
-    chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-      if (info.menuItemId === 'web-augmenter-add-element' && tab?.id) {
-        // Send message to content script to capture selected element
-        try {
-          chrome.tabs.sendMessage(tab.id, {
-            type: 'ADD_ELEMENT_TO_AUGMENTER',
-            selectionText: info.selectionText
-          });
-        } catch (error) {
-          console.warn('Could not send add element message:', error);
-        }
-      } else if (info.menuItemId === 'web-augmenter-visual-mode' && tab?.id) {
-        // Toggle visual editing mode
-        try {
-          chrome.tabs.sendMessage(tab.id, {
-            type: 'TOGGLE_VISUAL_EDITING_MODE'
-          });
-        } catch (error) {
-          console.warn('Could not toggle visual editing mode:', error);
-        }
+    chrome.tabs.onActivated.addListener(async (activeInfo) => {
+      try {
+        await chrome.sidePanel.close({ windowId: activeInfo.windowId });
+      } catch {
+        // Panel may already be closed
       }
     });
   }

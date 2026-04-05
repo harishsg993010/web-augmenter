@@ -79,19 +79,7 @@ class ContentScript {
   }
 
   private setupKeyboardShortcuts(): void {
-    document.addEventListener('keydown', (e) => {
-      // Ctrl+Shift+E or Cmd+Shift+E - Toggle Visual Editing Mode
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'E') {
-        e.preventDefault();
-        this.toggleVisualEditingMode();
-      }
-      
-      // Ctrl+Shift+U or Cmd+Shift+U - Toggle UI Generation Mode
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'U') {
-        e.preventDefault();
-        this.toggleUIGenerationMode();
-      }
-    });
+    // Keyboard shortcuts removed — modes are activated via the side panel
   }
 
   private onDOMReady(): void {
@@ -113,9 +101,7 @@ class ContentScript {
     chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       this.handleMessage(message, sender)
         .then(response => {
-          if (response) {
-            sendResponse(response);
-          }
+          sendResponse(response ?? null);
         })
         .catch(error => {
           console.error('Web Augmenter: Error handling message:', error);
@@ -125,7 +111,7 @@ class ContentScript {
           });
         });
 
-      // Return true for async response
+      // Return true to keep the message channel open for the async sendResponse call
       return true;
     });
 
@@ -166,6 +152,31 @@ class ContentScript {
 
         case 'TOGGLE_VISUAL_EDITING_MODE':
           return this.toggleVisualEditingMode();
+
+        case 'ENABLE_VISUAL_EDITING_MODE':
+          if (!this.visualEditingMode) this.toggleVisualEditingMode();
+          return;
+
+        case 'DISABLE_VISUAL_EDITING_MODE':
+          this.disableVisualEditingMode();
+          return;
+
+        case 'TOGGLE_UI_GENERATION_MODE':
+          return this.toggleUIGenerationMode();
+
+        case 'ENABLE_UI_GENERATION_MODE':
+          if (!this.uiGenerationMode) this.toggleUIGenerationMode();
+          return;
+
+        case 'DISABLE_UI_GENERATION_MODE':
+          this.disableUIGenerationMode();
+          return;
+
+        case 'EXECUTE_ELEMENT_INSTRUCTION':
+          return await this.handleExecuteElementInstruction(message.instruction, message.selector, message.elementInfo);
+
+        case 'GENERATE_UI_FROM_PANEL':
+          return await this.handleGenerateUIFromPanel(message.instruction, message.location);
 
         case 'STORAGE_CHANGED':
           return this.handleStorageChanged(message.changes);
@@ -259,38 +270,19 @@ class ContentScript {
     try {
       await patchInjector.injectPatches(message.patches);
 
-      // Show detailed success notification
-      const hasCSS = message.patches.css && message.patches.css.length > 0;
-      const hasScript = message.patches.script && message.patches.script.length > 0;
-      
-      let details = '';
-      if (hasCSS && hasScript) {
-        details = ' (CSS + JS)';
-      } else if (hasCSS) {
-        details = ' (CSS only)';
-      } else if (hasScript) {
-        details = ' (JS only)';
-      } else {
-        details = ' (No changes generated)';
-      }
-
-      this.showNotification(
-        `✓ Applied: ${message.patches.high_level_goal}${details}`,
-        hasCSS || hasScript ? 'success' : 'error'
-      );
-
-      // Log details for debugging
-      console.log('Web Augmenter: Patch details', {
+      const hasChanges = !!(message.patches.css?.length || message.patches.script?.length);
+      chrome.runtime.sendMessage({
+        type: 'PATCHES_APPLIED',
         goal: message.patches.high_level_goal,
-        hasCSS,
-        hasScript,
-        cssLength: message.patches.css?.length || 0,
-        scriptLength: message.patches.script?.length || 0
-      });
+        hasChanges
+      }).catch(() => {});
 
     } catch (error) {
       console.error('Web Augmenter: Failed to inject patches:', error);
-      this.showNotification('Failed to apply changes', 'error');
+      chrome.runtime.sendMessage({
+        type: 'PATCHES_FAILED',
+        error: error instanceof Error ? error.message : 'Failed to apply changes'
+      }).catch(() => {});
       throw error;
     }
   }
@@ -928,6 +920,43 @@ Please generate CSS and/or JavaScript to ${instruction}. Target the element usin
     }
   }
 
+  private async handleExecuteElementInstruction(instruction: string, selector: string, elementInfo: any): Promise<void> {
+    try {
+      this.showNotification('Processing element change...', 'info');
+      const detailedInstruction = `
+Modify the following element:
+- Selector: ${selector}
+- Tag: ${elementInfo.tagName}
+- Current text: ${elementInfo.innerText}
+
+User instruction: ${instruction}
+
+Please generate CSS and/or JavaScript to ${instruction}. Target the element using the selector: ${selector}`;
+      await this.handleExecuteInstruction(detailedInstruction, false);
+
+      if (this.highlightOverlay) {
+        this.highlightOverlay.remove();
+        this.highlightOverlay = null;
+      }
+    } catch (error) {
+      chrome.runtime.sendMessage({
+        type: 'PATCHES_FAILED',
+        error: error instanceof Error ? error.message : 'Failed to apply changes'
+      }).catch(() => {});
+    }
+  }
+
+  private async handleGenerateUIFromPanel(instruction: string, location: { x: number; y: number; width: number; height: number }): Promise<void> {
+    try {
+      await this.generateUIAtLocation(instruction, location);
+    } catch (error) {
+      chrome.runtime.sendMessage({
+        type: 'PATCHES_FAILED',
+        error: error instanceof Error ? error.message : 'Failed to generate UI'
+      }).catch(() => {});
+    }
+  }
+
   private async handleStorageChanged(changes: any): Promise<void> {
     // Re-apply auto-features if custom features changed
     if (changes.customFeatures) {
@@ -1002,13 +1031,6 @@ Please generate CSS and/or JavaScript to ${instruction}. Target the element usin
         }
       }
 
-      if (features.length > 0) {
-        this.showNotification(
-          `Auto-applied ${features.length} feature(s)`,
-          'info'
-        );
-      }
-
     } catch (error) {
       // Check if error is due to invalidated extension context
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -1081,8 +1103,6 @@ Please generate CSS and/or JavaScript to ${instruction}. Target the element usin
   }
 
   private enableVisualEditingMode(): void {
-    this.showNotification('🎨 Visual Editing Mode Enabled - Click any element to edit it', 'success');
-    
     // Create semi-transparent overlay
     this.visualModeOverlay = document.createElement('div');
     this.visualModeOverlay.id = 'web-augmenter-visual-mode-overlay';
@@ -1097,38 +1117,7 @@ Please generate CSS and/or JavaScript to ${instruction}. Target the element usin
       background: rgba(0, 124, 186, 0.02);
     `;
     document.body.appendChild(this.visualModeOverlay);
-    
-    // Create persistent indicator
-    this.visualModeIndicator = document.createElement('div');
-    this.visualModeIndicator.id = 'web-augmenter-visual-indicator';
-    this.visualModeIndicator.style.cssText = `
-      position: fixed;
-      top: 10px;
-      right: 10px;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      padding: 12px 20px;
-      border-radius: 25px;
-      font-family: Arial, sans-serif;
-      font-size: 14px;
-      font-weight: 600;
-      z-index: 1000001;
-      box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-      cursor: pointer;
-      user-select: none;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-    `;
-    this.visualModeIndicator.innerHTML = '🎨 Visual Editing Mode <span style="opacity: 0.7; font-size: 11px; margin-left: 8px;">Alt+Drag to move • Click to edit • Click here to disable</span>';
-    
-    // Click indicator to disable mode
-    this.visualModeIndicator.addEventListener('click', () => {
-      this.toggleVisualEditingMode();
-    });
-    
-    document.body.appendChild(this.visualModeIndicator);
-    
+
     // Add click listener to all elements
     document.addEventListener('click', this.handleVisualModeClick, true);
     document.addEventListener('mouseover', this.handleVisualModeHover, true);
@@ -1138,41 +1127,14 @@ Please generate CSS and/or JavaScript to ${instruction}. Target the element usin
     document.addEventListener('mouseup', this.handleVisualModeDragEnd, true);
   }
 
-  private disableVisualEditingMode(): void {
-    this.showNotification('Visual Editing Mode Disabled', 'info');
-    
-    // Reset augmenting state
-    this.isAugmenting = false;
-    
-    // Remove overlay and indicator
+  private teardownVisualClickLayer(): void {
+    this.visualEditingMode = false;
+
     if (this.visualModeOverlay) {
       this.visualModeOverlay.remove();
       this.visualModeOverlay = null;
     }
-    
-    if (this.visualModeIndicator) {
-      this.visualModeIndicator.remove();
-      this.visualModeIndicator = null;
-    }
-    
-    if (this.highlightOverlay) {
-      this.highlightOverlay.remove();
-      this.highlightOverlay = null;
-    }
-    
-    // Close any open dialog
-    const openDialog = document.querySelector('div[style*="position: fixed"][style*="transform: translate(-50%, -50%)"]');
-    if (openDialog && openDialog.textContent?.includes('What would you like to do')) {
-      openDialog.remove();
-    }
-    
-    // Close inline dialog
-    const inlineDialog = document.getElementById('web-augmenter-inline-dialog');
-    if (inlineDialog) {
-      inlineDialog.remove();
-    }
-    
-    // Remove event listeners
+
     document.removeEventListener('click', this.handleVisualModeClick, true);
     document.removeEventListener('mouseover', this.handleVisualModeHover, true);
     document.removeEventListener('mouseout', this.handleVisualModeOut, true);
@@ -1181,12 +1143,24 @@ Please generate CSS and/or JavaScript to ${instruction}. Target the element usin
     document.removeEventListener('mouseup', this.handleVisualModeDragEnd, true);
   }
 
+  private disableVisualEditingMode(): void {
+    this.teardownVisualClickLayer();
+    this.isAugmenting = false;
+
+    if (this.highlightOverlay) {
+      this.highlightOverlay.remove();
+      this.highlightOverlay = null;
+    }
+
+    const inlineDialog = document.getElementById('web-augmenter-inline-dialog');
+    if (inlineDialog) inlineDialog.remove();
+  }
+
   private handleVisualModeClick = (e: MouseEvent): void => {
     const target = e.target as Element;
     
     // Ignore clicks on our own UI and dialogs
-    if (target.id?.startsWith('web-augmenter-') || 
-        target.closest('#web-augmenter-visual-indicator') ||
+    if (target.id?.startsWith('web-augmenter-') ||
         target.closest('#web-augmenter-inline-dialog') ||
         target.closest('div[style*="position: fixed"][style*="transform: translate(-50%, -50%)"]')) {
       return;
@@ -1213,9 +1187,16 @@ Please generate CSS and/or JavaScript to ${instruction}. Target the element usin
     const elementInfo = this.extractElementInfo(target);
     this.savedElements.set(elementId, elementInfo);
     
-    // Highlight and show inline dialog (blue highlight for selected)
+    // Tear down click layer so user can't select another element
+    this.teardownVisualClickLayer();
+
+    // Highlight element and notify the side panel
     this.highlightElement(target, false);
-    this.showInlineElementDialog(elementId, elementInfo, target);
+    chrome.runtime.sendMessage({
+      type: 'ELEMENT_SELECTED',
+      selector: elementInfo.selector,
+      elementInfo
+    });
   };
 
   private handleVisualModeHover = (e: MouseEvent): void => {
@@ -1584,36 +1565,9 @@ ${selector} {
     }
   }
 
-  private showNotification(message: string, type: 'success' | 'error' | 'info' = 'info'): void {
-    const notification = document.createElement('div');
-    notification.textContent = message;
-    notification.style.cssText = `
-      position: fixed;
-      top: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: ${type === 'success' ? '#4CAF50' : type === 'error' ? '#f44336' : '#2196F3'};
-      color: white;
-      padding: 10px 20px;
-      border-radius: 5px;
-      z-index: 10001;
-      font-family: Arial, sans-serif;
-      font-size: 14px;
-      box-shadow: 0 2px 10px rgba(0,0,0,0.3);
-      max-width: 400px;
-      text-align: center;
-    `;
-
-    document.body.appendChild(notification);
-
-    // Remove after 3 seconds
-    setTimeout(() => {
-      try {
-        notification.remove();
-      } catch (e) {
-        // Element might have been removed already
-      }
-    }, 3000);
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  private showNotification(_message: string, _type: 'success' | 'error' | 'info' = 'info'): void {
+    // Page-side notifications removed — all status lives in the side panel
   }
 
   // UI Generation Mode Methods
@@ -1628,8 +1582,6 @@ ${selector} {
   }
 
   private enableUIGenerationMode(): void {
-    this.showNotification('🎨 UI Generation Mode - Draw a rectangle where you want to create UI', 'success');
-    
     // Create overlay
     const overlay = document.createElement('div');
     overlay.id = 'web-augmenter-ui-gen-overlay';
@@ -1644,30 +1596,7 @@ ${selector} {
       background: rgba(102, 126, 234, 0.05);
     `;
     document.body.appendChild(overlay);
-    
-    // Create indicator
-    const indicator = document.createElement('div');
-    indicator.id = 'web-augmenter-ui-gen-indicator';
-    indicator.style.cssText = `
-      position: fixed;
-      top: 10px;
-      right: 10px;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      padding: 12px 20px;
-      border-radius: 25px;
-      font-family: Arial, sans-serif;
-      font-size: 14px;
-      font-weight: 600;
-      z-index: 1000001;
-      box-shadow: 0 4px 15px rgba(0,0,0,0.3);
-      cursor: pointer;
-      user-select: none;
-    `;
-    indicator.innerHTML = '🎨 UI Generation Mode <span style="opacity: 0.7; font-size: 11px; margin-left: 8px;">Draw rectangle • Click here to cancel</span>';
-    indicator.addEventListener('click', () => this.toggleUIGenerationMode());
-    document.body.appendChild(indicator);
-    
+
     // Add event listeners
     overlay.addEventListener('mousedown', this.handleUIDrawStart);
     document.addEventListener('mousemove', this.handleUIDrawMove);
@@ -1675,21 +1604,25 @@ ${selector} {
   }
 
   private disableUIGenerationMode(): void {
-    this.showNotification('UI Generation Mode Disabled', 'info');
-    
-    const overlay = document.getElementById('web-augmenter-ui-gen-overlay');
-    if (overlay) overlay.remove();
-    
-    const indicator = document.getElementById('web-augmenter-ui-gen-indicator');
-    if (indicator) indicator.remove();
-    
+    this.teardownUIDrawLayer();
+
     if (this.uiLocationBox) {
       this.uiLocationBox.remove();
       this.uiLocationBox = null;
     }
-    
+  }
+
+  private teardownUIDrawLayer(): void {
+    const overlay = document.getElementById('web-augmenter-ui-gen-overlay');
+    if (overlay) overlay.remove();
+
+    const indicator = document.getElementById('web-augmenter-ui-gen-indicator');
+    if (indicator) indicator.remove();
+
     document.removeEventListener('mousemove', this.handleUIDrawMove);
     document.removeEventListener('mouseup', this.handleUIDrawEnd);
+
+    this.uiGenerationMode = false;
   }
 
   private handleUIDrawStart = (e: MouseEvent): void => {
@@ -1749,8 +1682,14 @@ ${selector} {
       return;
     }
     
-    // Show input dialog
-    this.showUIGenerationDialog({ x: left, y: top, width, height });
+    // Tear down the draw layer so user can't draw again, but keep the box visible
+    this.teardownUIDrawLayer();
+
+    // Notify the side panel with the drawn region
+    chrome.runtime.sendMessage({
+      type: 'REGION_DRAWN',
+      location: { x: left, y: top, width, height }
+    });
   };
 
   private showUIGenerationDialog(location: { x: number; y: number; width: number; height: number }): void {
@@ -1858,7 +1797,7 @@ Examples:
       }
     } catch (error) {
       console.error('UI generation failed:', error);
-      this.showNotification(`Failed to generate UI: ${error instanceof Error ? error.message : 'Unknown error'}`, 'error');
+      throw error;
     }
   }
 }

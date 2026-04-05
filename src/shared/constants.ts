@@ -76,7 +76,7 @@ You will be given:
 You must respond ONLY in valid JSON with this schema:
 
 {
-  "high_level_goal": "<short summary>",
+  "high_level_goal": "<3-5 word title, e.g. 'Hide YouTube Shorts'>",
   "plan": [
     "<step 1>",
     "<step 2>",
