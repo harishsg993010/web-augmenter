@@ -381,6 +381,8 @@ class PopupUI {
       const response = await chrome.runtime.sendMessage({ type: 'DELETE_CUSTOM_FEATURE', featureId });
       if (response?.type === 'FEATURE_DELETED') {
         await this.loadCustomFeatures();
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tabs[0]?.id) chrome.tabs.reload(tabs[0].id);
       }
     } catch {
       // extension context invalidated — nothing to show
