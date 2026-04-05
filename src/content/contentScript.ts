@@ -1185,7 +1185,7 @@ Please generate CSS and/or JavaScript to ${instruction}. Target the element usin
       z-index: 1000001;
       pointer-events: none;
       background: transparent;
-      box-shadow: inset 0 0 0 3px #6366f1;
+      box-shadow: inset 0 0 0 3px #376bef;
     `;
     document.body.appendChild(this.visualModeOverlay);
 
@@ -1351,8 +1351,8 @@ Please generate CSS and/or JavaScript to ${instruction}. Target the element usin
       left: ${rect.left}px;
       width: ${rect.width}px;
       height: ${rect.height}px;
-      border: 3px dashed #667eea;
-      background: rgba(102, 126, 234, 0.1);
+      border: 3px dashed #376bef;
+      background: rgba(55, 107, 239, 0.1);
       pointer-events: none;
       z-index: 1000000;
       cursor: move;
@@ -1712,7 +1712,7 @@ ${selector} {
       z-index: 1000001;
       cursor: crosshair;
       background: transparent;
-      box-shadow: inset 0 0 0 3px #6366f1;
+      box-shadow: inset 0 0 0 3px #376bef;
     `;
     document.body.appendChild(overlay);
 
@@ -1754,8 +1754,8 @@ ${selector} {
     this.uiLocationBox = document.createElement('div');
     this.uiLocationBox.style.cssText = `
       position: fixed;
-      border: 3px dashed #667eea;
-      background: rgba(102, 126, 234, 0.1);
+      border: 3px dashed #376bef;
+      background: rgba(55, 107, 239, 0.1);
       z-index: 1000002;
       pointer-events: none;
     `;
@@ -1846,7 +1846,7 @@ Examples:
         style="width: 100%; height: 120px; padding: 10px; border: 2px solid #ddd; border-radius: 8px; 
                font-family: inherit; font-size: 14px; resize: vertical; box-sizing: border-box;"></textarea>
       <div style="display: flex; gap: 10px; margin-top: 15px;">
-        <button id="ui-gen-create" style="flex: 1; padding: 12px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+        <button id="ui-gen-create" style="flex: 1; padding: 12px; background: #376bef; 
                 color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 14px;">
           ✨ Generate UI
         </button>
