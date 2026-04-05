@@ -17,6 +17,7 @@ interface DrawnRegion {
 
 class PopupUI {
   private currentHostname: string = '';
+  private currentUrl: string = '';
   private isLoading: boolean = false;
   private activeMode: Mode = 'prompt';
   private selectedElement: SelectedElement | null = null;
@@ -51,6 +52,7 @@ class PopupUI {
       const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
       const tab = tabs[0];
       if (tab?.url) {
+        this.currentUrl = tab.url;
         this.currentHostname = new URL(tab.url).hostname;
       }
     } catch {
@@ -311,16 +313,32 @@ class PopupUI {
     }
   }
 
+  private featureMatchesSite(feature: CustomFeature): boolean {
+    const { type, value } = feature.scope;
+    if (type === FEATURE_SCOPE_TYPES.GLOBAL) return true;
+    if (type === FEATURE_SCOPE_TYPES.HOSTNAME) return value === this.currentHostname;
+    if (type === FEATURE_SCOPE_TYPES.DOMAIN) {
+      const domain = this.currentHostname.split('.').slice(-2).join('.');
+      return value === domain || this.currentHostname.endsWith('.' + value);
+    }
+    if (type === FEATURE_SCOPE_TYPES.URL_PATTERN) {
+      try { return new RegExp(value).test(this.currentUrl); } catch { return false; }
+    }
+    return false;
+  }
+
   private renderCustomFeatures(features: CustomFeature[]): void {
     const container = this.get('featuresList');
     container.querySelectorAll('.feature-item').forEach(el => el.remove());
 
-    if (features.length === 0) {
+    const siteFeatures = features.filter(f => this.featureMatchesSite(f));
+
+    if (siteFeatures.length === 0) {
       this.get('noFeatures').classList.remove('hidden');
       return;
     }
     this.get('noFeatures').classList.add('hidden');
-    features.forEach(f => container.appendChild(this.createFeatureElement(f)));
+    siteFeatures.forEach(f => container.appendChild(this.createFeatureElement(f)));
   }
 
   private createFeatureElement(feature: CustomFeature): HTMLElement {
@@ -376,7 +394,8 @@ class PopupUI {
       hostname: this.currentHostname,
       enabled
     });
-    await this.sendToActiveTab('REAPPLY_AUTO_FEATURES');
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tabs[0]?.id) chrome.tabs.reload(tabs[0].id);
   }
 
   // ---- Event listeners ----
@@ -449,6 +468,8 @@ class PopupUI {
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
 
   private showStatus(message: string, type: 'success' | 'error' | 'info'): void {
+    const inputBar = this.get('inputBar');
+    document.documentElement.style.setProperty('--input-bar-height', inputBar.offsetHeight + 'px');
     const toast = this.get('toast');
     if (this.toastTimer) clearTimeout(this.toastTimer);
     toast.textContent = message;
