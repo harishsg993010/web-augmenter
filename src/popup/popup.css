@@ -269,7 +269,7 @@ body {
     resize: none;
     min-height: 40px;
     max-height: 180px;
-    padding: 9px 12px;
+    padding: 9px 6px 9px 12px;
     line-height: 1.4;
     overflow-y: auto;
     transition: border-color 0.15s;

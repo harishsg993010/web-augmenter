@@ -18,6 +18,7 @@ interface DrawnRegion {
 class PopupUI {
   private currentHostname: string = '';
   private currentUrl: string = '';
+  private currentTabId: number | null = null;
   private isLoading: boolean = false;
   private activeMode: Mode = 'prompt';
   private selectedElement: SelectedElement | null = null;
@@ -40,8 +41,16 @@ class PopupUI {
       await this.loadCustomFeatures();
       this.setupEventListeners();
       this.setupMessageListener();
+      this.connectLifecyclePort();
     } catch (error) {
       console.error('Failed to initialize popup:', error);
+    }
+  }
+
+  private connectLifecyclePort(): void {
+    const port = chrome.runtime.connect({ name: 'side-panel' });
+    if (this.currentTabId !== null) {
+      port.postMessage({ type: 'SIDE_PANEL_TAB', tabId: this.currentTabId });
     }
   }
 
@@ -54,6 +63,7 @@ class PopupUI {
       if (tab?.url) {
         this.currentUrl = tab.url;
         this.currentHostname = new URL(tab.url).hostname;
+        this.currentTabId = tab.id ?? null;
       }
     } catch {
       // hostname stays empty

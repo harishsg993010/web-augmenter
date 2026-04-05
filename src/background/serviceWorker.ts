@@ -466,6 +466,23 @@ class BackgroundService {
         // Panel may already be closed
       }
     });
+
+    chrome.runtime.onConnect.addListener((port) => {
+      if (port.name !== 'side-panel') return;
+      let tabId: number | null = null;
+
+      port.onMessage.addListener((msg) => {
+        if (msg.type === 'SIDE_PANEL_TAB' && typeof msg.tabId === 'number') {
+          tabId = msg.tabId;
+        }
+      });
+
+      port.onDisconnect.addListener(() => {
+        if (tabId !== null) {
+          chrome.tabs.sendMessage(tabId, { type: 'SIDE_PANEL_CLOSED' }).catch(() => {});
+        }
+      });
+    });
   }
 
   private setupStorageListener(): void {

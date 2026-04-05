@@ -178,6 +178,11 @@ class ContentScript {
           this.disableUIGenerationMode();
           return;
 
+        case 'SIDE_PANEL_CLOSED':
+          this.disableVisualEditingMode();
+          this.disableUIGenerationMode();
+          return;
+
         case 'EXECUTE_ELEMENT_INSTRUCTION':
           return await this.handleExecuteElementInstruction(message.instruction, message.selector, message.elementInfo);
 
