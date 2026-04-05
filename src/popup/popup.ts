@@ -324,41 +324,37 @@ class PopupUI {
   }
 
   private createFeatureElement(feature: CustomFeature): HTMLElement {
+    const enabled = feature.autoApply !== false;
     const div = document.createElement('div');
-    div.className = 'feature-item';
+    div.className = `feature-item${enabled ? ' enabled' : ''}`;
     div.innerHTML = `
-      <div class="feature-header">
-        <span class="feature-name">${this.escapeHtml(feature.name)}</span>
-        <span class="feature-scope">${this.getScopeDisplayName(feature.scope)}</span>
-      </div>
-      ${feature.description ? `<div class="feature-description">${this.escapeHtml(feature.description)}</div>` : ''}
-      <div class="feature-actions">
-        <button class="feature-btn apply-btn">Apply</button>
-        <label class="auto-apply-toggle">
-          <input type="checkbox" ${feature.autoApply ? 'checked' : ''}> Auto
-        </label>
-        <button class="feature-btn danger delete-btn">Delete</button>
-      </div>
+      <button class="feature-toggle${enabled ? ' on' : ''}">
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+          <polyline points="2,6 5,9 10,3" stroke="white" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <span class="feature-name">${this.escapeHtml(feature.name)}</span>
+      <button class="feature-delete" title="Delete">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+          <polyline points="3,6 21,6" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M8 6V4h8v2" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          <rect x="5" y="6" width="14" height="15" rx="2" stroke="currentColor" stroke-width="2"/>
+          <line x1="10" y1="11" x2="10" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <line x1="14" y1="11" x2="14" y2="17" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+      </button>
     `;
 
-    div.querySelector('.apply-btn')!.addEventListener('click', () => this.applyCustomFeature(feature.id));
-    div.querySelector('.delete-btn')!.addEventListener('click', () => this.deleteCustomFeature(feature.id));
-    const autoToggle = div.querySelector('input[type="checkbox"]') as HTMLInputElement;
-    autoToggle.addEventListener('change', () => this.toggleAutoApply(feature.id, autoToggle.checked));
+    const toggle = div.querySelector('.feature-toggle') as HTMLButtonElement;
+    toggle.addEventListener('click', () => {
+      const isOn = toggle.classList.toggle('on');
+      div.classList.toggle('enabled', isOn);
+      this.toggleAutoApply(feature.id, isOn);
+    });
+
+    div.querySelector('.feature-delete')!.addEventListener('click', () => this.deleteCustomFeature(feature.id));
 
     return div;
-  }
-
-  private async applyCustomFeature(featureId: string): Promise<void> {
-    try {
-      const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-      const tab = tabs[0];
-      if (!tab?.id || !tab.url || !this.isValidWebPage(tab.url)) throw new Error('Cannot apply on this page');
-      await this.ensureContentScriptLoaded(tab.id);
-      await chrome.tabs.sendMessage(tab.id, { type: 'APPLY_CUSTOM_FEATURE', featureId });
-    } catch {
-      this.showStatus('Failed to apply feature', 'error');
-    }
   }
 
   private async deleteCustomFeature(featureId: string): Promise<void> {
@@ -380,6 +376,7 @@ class PopupUI {
       hostname: this.currentHostname,
       enabled
     });
+    await this.sendToActiveTab('REAPPLY_AUTO_FEATURES');
   }
 
   // ---- Event listeners ----

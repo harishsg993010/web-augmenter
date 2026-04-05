@@ -328,13 +328,12 @@ class BackgroundService {
 
   private async handleToggleFeatureAutoApply(message: any): Promise<any> {
     try {
-      const { featureId, hostname, enabled } = message;
-      await persistence.setAutoApply(featureId, hostname, enabled);
+      const { featureId, enabled } = message;
+      await persistence.updateCustomFeature(featureId, { autoApply: enabled });
 
       return {
         type: 'AUTO_APPLY_TOGGLED',
         featureId,
-        hostname,
         enabled
       };
     } catch (error) {

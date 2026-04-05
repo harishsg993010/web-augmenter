@@ -144,6 +144,12 @@ class ContentScript {
         case 'REMOVE_ALL_PATCHES':
           return this.handleRemoveAllPatches();
 
+        case 'REAPPLY_AUTO_FEATURES':
+          patchInjector.removeAllInjectedElements();
+          this.autoAppliedFeatures.clear();
+          await this.autoApplyFeatures();
+          return;
+
         case 'CONTEXT_MENU_CLICKED':
           return this.handleContextMenuClicked();
 
