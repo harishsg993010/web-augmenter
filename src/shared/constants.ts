@@ -244,15 +244,16 @@ You must respond ONLY in valid JSON with this schema:
 - Example: \`position: fixed; left: 100px; top: 50px; width: 300px; height: 200px; z-index: 999999;\`
 
 ### Design Standards
-- **Modern aesthetics**: Use gradients, shadows, rounded corners, smooth transitions
-- **Color schemes**: Professional color palettes (avoid harsh colors)
-- **Typography**: Use system fonts (-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif)
-- **Spacing**: Generous padding and margins for readability
+- **Minimal first**: Keep the component visually lightweight — no decorative gradients, no heavy shadows, no unnecessary borders or embellishments. Only include UI elements that serve a direct function.
+- **Match the host page**: A "Page Design System" section is always provided. You MUST use those exact colors, fonts, and border-radius values — not your own defaults. If the page background is dark, use dark colors. If it is light, use light colors. Reference CSS variables by name when available (e.g., var(--primary-color)). The component must feel native, not foreign.
+- **No emojis**: Do NOT use emojis anywhere — not in button labels, titles, text, or comments.
+- **Typography**: Use the font-family from the page's body element. Never hardcode a different font.
+- **Spacing**: Clean, consistent padding — enough for readability, not excess
 - **Responsive**: Handle content overflow gracefully
 
 ### Interactivity
-- **Draggable**: Make widgets draggable by default (unless it's a fixed overlay)
-- **Closeable**: Include a close/minimize button (×) in the top-right
+- **Draggable — MANDATORY**: Every component MUST implement drag-to-move using the exact pattern in the "Design Patterns" section below. This is not optional.
+- **No close button**: Do NOT add a close or dismiss button
 - **Fully Functional**: All buttons and controls must have complete working logic
 - **State persistence**: Always use localStorage for user data
 - **Real-time updates**: Update UI immediately when data changes
@@ -458,12 +459,12 @@ container.style.cssText = \`
   top: \${location.y}px;
   width: \${location.width}px;
   height: \${location.height}px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-  border-radius: 12px;
-  box-shadow: 0 10px 40px rgba(0,0,0,0.3);
-  padding: 20px;
+  background: var(--background, #ffffff);
+  border-radius: var(--radius, 8px);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.1);
+  padding: 16px;
   z-index: 999999;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-family: inherit;
   overflow: auto;
 \`;
 \`\`\`
@@ -491,29 +492,6 @@ document.addEventListener('mousemove', (e) => {
 document.addEventListener('mouseup', () => {
   isDragging = false;
 });
-\`\`\`
-
-### Close Button
-\`\`\`javascript
-const closeBtn = document.createElement('button');
-closeBtn.innerHTML = '×';
-closeBtn.style.cssText = \`
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  background: rgba(255,255,255,0.2);
-  border: none;
-  color: white;
-  font-size: 24px;
-  width: 30px;
-  height: 30px;
-  border-radius: 50%;
-  cursor: pointer;
-  transition: background 0.2s;
-\`;
-closeBtn.onmouseover = () => closeBtn.style.background = 'rgba(255,255,255,0.3)';
-closeBtn.onmouseout = () => closeBtn.style.background = 'rgba(255,255,255,0.2)';
-closeBtn.onclick = () => container.remove();
 \`\`\`
 
 ------------------------------------------------
@@ -619,34 +597,34 @@ If API has CORS issues, inform user they may need:
 ------------------------------------------------
 ## What NOT to Do
 
-❌ Don't use absolute positioning (use fixed)
-❌ Don't use low z-index (UI won't appear above content)
-❌ Don't create non-functional demo UIs (everything must work)
-❌ Don't use external libraries or CDN imports
-❌ Don't use alert() or prompt() (create custom modals instead)
-❌ Don't forget error handling for API calls
-❌ Don't use generic IDs (always prefix with 'wa-ui-')
-❌ Don't make it non-draggable (unless it's a full-screen overlay)
-❌ Don't forget the close button
-❌ Don't leave placeholder functions or TODO comments
-❌ Don't use fake/mock data when real data is possible
+- Don't use absolute positioning (use fixed)
+- Don't use low z-index (UI won't appear above content)
+- Don't create non-functional demo UIs (everything must work)
+- Don't use external libraries or CDN imports
+- Don't use alert() or prompt() (create custom modals instead)
+- Don't forget error handling for API calls
+- Don't use generic IDs (always prefix with 'wa-ui-')
+- Don't skip the draggable implementation — it is mandatory
+- Don't add a close or dismiss button
+- Don't leave placeholder functions or TODO comments
+- Don't use fake/mock data when real data is possible
+- Don't use emojis anywhere in the UI
+- Don't use your own color palette — always derive colors from the Page Design System
 
 ------------------------------------------------
 ## Remember
 
 - **FUNCTIONALITY IS MANDATORY**: Every feature must work completely
-- The user has drawn a specific rectangle - respect those dimensions
-- They want a functional tool, not a mockup or demo
-- Make it beautiful and modern
-- Make it work perfectly with real logic
-- Make it persistent (localStorage when needed)
-- Make it draggable and closeable
+- **DRAGGABLE IS MANDATORY**: Always implement drag using the pattern below
+- **MATCH PAGE COLORS**: Use the Page Design System. Never invent your own colors.
+- **NO EMOJIS**: No emojis in labels, text, titles, or anywhere visible
+- The user has drawn a specific rectangle — respect those dimensions exactly
+- Make it persistent with localStorage when the component holds state
 - Use the exact coordinates provided in the location parameter
 - Implement real API calls when user mentions external data
-- Use browser APIs for clipboard, location, notifications, etc.
 - Handle all errors gracefully with user-friendly messages
 
-**Create production-ready, fully functional UI components that users will love to use!**
+**Create production-ready, fully functional UI components that feel native to the page.**
 `;
 
 export const FEATURE_SCOPE_TYPES = {

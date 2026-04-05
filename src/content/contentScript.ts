@@ -3,6 +3,7 @@ import {
   MessageFromBackground,
   MessageToContent,
   PageContext,
+  PageStyles,
   CustomFeature,
   ElementInfo
 } from '../shared/types.js';
@@ -40,6 +41,8 @@ class ContentScript {
   private uiDrawing: boolean = false;
   private uiDrawStartX: number = 0;
   private uiDrawStartY: number = 0;
+  private modeBlockOverlay: HTMLElement | null = null;
+  private hiddenComponentDisplays: Map<HTMLElement, string> = new Map();
 
   constructor() {
     this.init();
@@ -72,6 +75,7 @@ class ContentScript {
       this.setupMessageListeners();
       this.setupUtilityLibrary();
       this.setupKeyboardShortcuts();
+      this.setupNavigationListener();
 
     } catch (error) {
       console.error('Web Augmenter: Failed to initialize content script:', error);
@@ -80,6 +84,54 @@ class ContentScript {
 
   private setupKeyboardShortcuts(): void {
     // Keyboard shortcuts removed — modes are activated via the side panel
+  }
+
+  private setupNavigationListener(): void {
+    let currentUrl = window.location.href;
+
+    const onNavigate = () => {
+      const newUrl = window.location.href;
+      if (newUrl === currentUrl) return;
+      currentUrl = newUrl;
+
+      // Remove floating components that belong to the previous URL
+      document.querySelectorAll<HTMLElement>('[id^="wa-ui-"]').forEach(el => el.remove());
+
+      // Clear applied set and schedule re-application for the new URL.
+      // debounceReapply handles settling; we also call it directly here in case
+      // the page reuses cached DOM with no addedNodes mutations.
+      this.autoAppliedFeatures.clear();
+      this.debounceReapply();
+    };
+
+    // Back/forward navigation
+    window.addEventListener('popstate', onNavigate);
+
+    // YouTube and other sites that fire custom navigation events
+    window.addEventListener('yt-navigate-finish', onNavigate);
+
+    // Generic SPA fallback: watch the <title> element for changes
+    const observeTitle = () => {
+      const title = document.querySelector('title');
+      if (!title) return;
+      new MutationObserver(onNavigate).observe(title, {
+        childList: true,
+        characterData: true,
+        subtree: true
+      });
+    };
+
+    if (document.querySelector('title')) {
+      observeTitle();
+    } else {
+      // Title not yet in DOM — wait for it
+      new MutationObserver((_, obs) => {
+        if (document.querySelector('title')) {
+          obs.disconnect();
+          observeTitle();
+        }
+      }).observe(document.head ?? document.documentElement, { childList: true });
+    }
   }
 
   private onDOMReady(): void {
@@ -1114,6 +1166,13 @@ Please generate CSS and/or JavaScript to ${instruction}. Target the element usin
   }
 
   private enableVisualEditingMode(): void {
+    this.removeModeBlockOverlay();
+    this.hideGeneratedComponents();
+    // Remove any previous element highlight
+    if (this.highlightOverlay) {
+      this.highlightOverlay.remove();
+      this.highlightOverlay = null;
+    }
     // Create semi-transparent overlay
     this.visualModeOverlay = document.createElement('div');
     this.visualModeOverlay.id = 'web-augmenter-visual-mode-overlay';
@@ -1123,7 +1182,7 @@ Please generate CSS and/or JavaScript to ${instruction}. Target the element usin
       left: 0;
       right: 0;
       bottom: 0;
-      z-index: 999997;
+      z-index: 1000001;
       pointer-events: none;
       background: transparent;
       box-shadow: inset 0 0 0 3px #6366f1;
@@ -1157,6 +1216,8 @@ Please generate CSS and/or JavaScript to ${instruction}. Target the element usin
 
   private disableVisualEditingMode(): void {
     this.teardownVisualClickLayer();
+    this.removeModeBlockOverlay();
+    this.showGeneratedComponents();
     this.isAugmenting = false;
 
     if (this.highlightOverlay) {
@@ -1199,8 +1260,9 @@ Please generate CSS and/or JavaScript to ${instruction}. Target the element usin
     const elementInfo = this.extractElementInfo(target);
     this.savedElements.set(elementId, elementInfo);
     
-    // Tear down click layer so user can't select another element
+    // Tear down click layer and block page interaction until mode is exited
     this.teardownVisualClickLayer();
+    this.addModeBlockOverlay();
 
     // Highlight element and notify the side panel
     this.highlightElement(target, false);
@@ -1593,7 +1655,51 @@ ${selector} {
     }
   }
 
+  private hideGeneratedComponents(): void {
+    this.hiddenComponentDisplays.clear();
+    document.querySelectorAll<HTMLElement>('[id^="wa-ui-"]').forEach(el => {
+      this.hiddenComponentDisplays.set(el, el.style.display);
+      el.style.display = 'none';
+    });
+  }
+
+  private showGeneratedComponents(): void {
+    this.hiddenComponentDisplays.forEach((originalDisplay, el) => {
+      el.style.display = originalDisplay;
+    });
+    this.hiddenComponentDisplays.clear();
+  }
+
+  private addModeBlockOverlay(): void {
+    if (this.modeBlockOverlay) return;
+    const overlay = document.createElement('div');
+    overlay.id = 'web-augmenter-mode-block';
+    overlay.style.cssText = `
+      position: fixed;
+      inset: 0;
+      z-index: 1000001;
+      cursor: default;
+    `;
+    document.body.appendChild(overlay);
+    this.modeBlockOverlay = overlay;
+  }
+
+  private removeModeBlockOverlay(): void {
+    if (this.modeBlockOverlay) {
+      this.modeBlockOverlay.remove();
+      this.modeBlockOverlay = null;
+    }
+    const existing = document.getElementById('web-augmenter-mode-block');
+    if (existing) existing.remove();
+  }
+
   private enableUIGenerationMode(): void {
+    this.removeModeBlockOverlay();
+    // Remove any previous selection box
+    if (this.uiLocationBox) {
+      this.uiLocationBox.remove();
+      this.uiLocationBox = null;
+    }
     // Create overlay
     const overlay = document.createElement('div');
     overlay.id = 'web-augmenter-ui-gen-overlay';
@@ -1603,7 +1709,7 @@ ${selector} {
       left: 0;
       right: 0;
       bottom: 0;
-      z-index: 999998;
+      z-index: 1000001;
       cursor: crosshair;
       background: transparent;
       box-shadow: inset 0 0 0 3px #6366f1;
@@ -1618,6 +1724,7 @@ ${selector} {
 
   private disableUIGenerationMode(): void {
     this.teardownUIDrawLayer();
+    this.removeModeBlockOverlay();
 
     if (this.uiLocationBox) {
       this.uiLocationBox.remove();
@@ -1649,7 +1756,7 @@ ${selector} {
       position: fixed;
       border: 3px dashed #667eea;
       background: rgba(102, 126, 234, 0.1);
-      z-index: 999999;
+      z-index: 1000002;
       pointer-events: none;
     `;
     document.body.appendChild(this.uiLocationBox);
@@ -1686,8 +1793,8 @@ ${selector} {
     const height = Math.abs(currentY - this.uiDrawStartY);
     
     // Minimum size check
-    if (width < 50 || height < 50) {
-      this.showNotification('Area too small. Please draw a larger rectangle.', 'error');
+    if (width < 10 || height < 10) {
+      this.showNotification('Area too small.', 'error');
       if (this.uiLocationBox) {
         this.uiLocationBox.remove();
         this.uiLocationBox = null;
@@ -1695,8 +1802,9 @@ ${selector} {
       return;
     }
     
-    // Tear down the draw layer so user can't draw again, but keep the box visible
+    // Tear down the draw layer and block page interaction until mode is exited
     this.teardownUIDrawLayer();
+    this.addModeBlockOverlay();
 
     // Notify the side panel with the drawn region
     chrome.runtime.sendMessage({
@@ -1774,10 +1882,68 @@ Examples:
     });
   }
 
+  private extractPageStyles(): PageStyles {
+    const cssVariables: Record<string, string> = {};
+
+    try {
+      for (const sheet of Array.from(document.styleSheets)) {
+        try {
+          const rules = Array.from(sheet.cssRules || []);
+          for (const rule of rules) {
+            if (rule instanceof CSSStyleRule) {
+              const selector = rule.selectorText || '';
+              if (selector === ':root' || selector === 'html' || selector.includes(':root')) {
+                const matches = rule.style.cssText.matchAll(/(--[\w-]+)\s*:\s*([^;]+)/g);
+                for (const match of matches) {
+                  const name = match[1].trim();
+                  const value = match[2].trim();
+                  // Skip very long values (e.g. data URIs or large SVGs)
+                  if (name && value && value.length < 200) {
+                    cssVariables[name] = value;
+                  }
+                }
+              }
+            }
+          }
+        } catch {
+          // Cross-origin stylesheet — skip
+        }
+      }
+    } catch {
+      // Stylesheet access unavailable
+    }
+
+    const targetSelectors = ['body', 'h1', 'h2', 'button', 'a', 'input', '[class*="btn"]'];
+    const elements: PageStyles['elements'] = [];
+
+    for (const selector of targetSelectors) {
+      try {
+        const el = document.querySelector(selector);
+        if (!el) continue;
+        const computed = getComputedStyle(el);
+        elements.push({
+          selector,
+          color: computed.color,
+          backgroundColor: computed.backgroundColor,
+          fontFamily: computed.fontFamily,
+          fontSize: computed.fontSize,
+          fontWeight: computed.fontWeight,
+          borderRadius: computed.borderRadius,
+          border: computed.border,
+          boxShadow: computed.boxShadow
+        });
+      } catch {
+        // Element inaccessible
+      }
+    }
+
+    return { cssVariables, elements };
+  }
+
   private async generateUIAtLocation(instruction: string, location: { x: number; y: number; width: number; height: number }): Promise<void> {
     try {
-      this.showNotification('🤖 Generating UI...', 'info');
-      
+      this.showNotification('Generating UI...', 'info');
+
       // Send message to background script to generate UI
       const response = await chrome.runtime.sendMessage({
         type: 'GENERATE_UI',
@@ -1786,7 +1952,8 @@ Examples:
         pageContext: {
           url: window.location.href,
           hostname: window.location.hostname,
-          domSummary: domSnapshotGenerator.generate()
+          domSummary: domSnapshotGenerator.generate(),
+          pageStyles: this.extractPageStyles()
         }
       });
       
@@ -1797,7 +1964,7 @@ Examples:
       // Inject the generated UI
       if (response.response) {
         await patchInjector.injectPatches(response.response);
-        this.showNotification('✅ UI generated and saved!', 'success');
+        this.showNotification('UI generated and saved!', 'success');
         
         // Clean up
         if (this.uiLocationBox) {

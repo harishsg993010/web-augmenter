@@ -158,6 +158,18 @@ class BackgroundService {
     }
   }
 
+  private urlToPattern(url: string): string {
+    try {
+      const parsed = new URL(url);
+      const base = parsed.origin + parsed.pathname;
+      const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // Match this exact path only — allow query/hash/end but not additional path segments
+      return '^' + escaped + '([?#]|$)';
+    } catch {
+      return url;
+    }
+  }
+
   private async handleGenerateUI(
     message: any,
     sender: chrome.runtime.MessageSender
@@ -183,7 +195,8 @@ class BackgroundService {
         instruction,
         location,
         pageContext,
-        screenshotBase64
+        screenshotBase64,
+        pageContext.pageStyles
       );
 
       // Save as a custom feature
@@ -191,8 +204,8 @@ class BackgroundService {
         id: `ui_gen_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         name: `Custom UI: ${instruction.substring(0, 50)}`,
         scope: {
-          type: 'hostname',
-          value: pageContext.hostname
+          type: 'urlPattern',
+          value: this.urlToPattern(pageContext.url)
         },
         script: response.script,
         css: response.css,
@@ -286,8 +299,8 @@ class BackgroundService {
         id: featureId,
         name: response.high_level_goal || 'Auto-generated feature',
         scope: {
-          type: 'hostname' as const,
-          value: hostname
+          type: 'urlPattern' as const,
+          value: this.urlToPattern(pageContext.url)
         },
         script: response.script || '',
         css: response.css || '',

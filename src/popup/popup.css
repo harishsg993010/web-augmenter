@@ -354,6 +354,43 @@ body {
 .toast.error   { background: #9f1239; }
 .toast.info    { background: #1e40af; }
 
+/* ---- Loading overlay ---- */
+.loading-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(245, 245, 247, 0.72);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+    z-index: 400;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    pointer-events: all;
+}
+
+.loading-overlay.hidden { display: none; }
+
+.loading-overlay-spinner {
+    width: 36px;
+    height: 36px;
+    border: 3px solid rgba(99, 102, 241, 0.2);
+    border-top-color: #6366f1;
+    border-radius: 50%;
+    animation: spin 0.75s linear infinite;
+}
+
+.loading-overlay-label {
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    background: linear-gradient(90deg, #6366f1, #818cf8);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
 /* ---- API Key Dialog ---- */
 .api-dialog {
     position: fixed;

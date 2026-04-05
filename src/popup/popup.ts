@@ -255,6 +255,16 @@ class PopupUI {
 
     if (this.isLoading) return;
 
+    if (this.activeMode === 'draw' && !this.drawnRegion) {
+      this.showStatus('Draw a region on the page first.', 'error');
+      return;
+    }
+
+    if (this.activeMode === 'inspect' && !this.selectedElement) {
+      this.showStatus('Select an element on the page first.', 'error');
+      return;
+    }
+
     try {
       this.setLoading(true);
 
@@ -420,6 +430,16 @@ class PopupUI {
     const textarea = this.get<HTMLTextAreaElement>('instruction');
     textarea.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+        // Ctrl+Enter / Cmd+Enter: insert newline
+        e.preventDefault();
+        const start = textarea.selectionStart;
+        const end = textarea.selectionEnd;
+        textarea.value = textarea.value.slice(0, start) + '\n' + textarea.value.slice(end);
+        textarea.selectionStart = textarea.selectionEnd = start + 1;
+        this.autoGrow(textarea);
+        this.updateSendBtn(textarea);
+      } else if (e.key === 'Enter' && !e.shiftKey) {
+        // Enter: send
         e.preventDefault();
         this.executeInstruction();
       }
@@ -432,8 +452,15 @@ class PopupUI {
 
     // Context tag clear
     this.get('contextTagClear').addEventListener('click', () => {
-      if (this.activeMode !== 'prompt') {
-        this.switchMode('prompt'); // handles deactivation
+      if (this.activeMode === 'draw' || this.activeMode === 'inspect') {
+        // Clear the selection but stay in the same mode so user can pick again
+        this.drawnRegion = null;
+        this.selectedElement = null;
+        this.get('contextTag').classList.add('hidden');
+        this.get('contextTagText').textContent = '';
+        this.updateModeHint();
+        // Re-activate the page mode so the block overlay is removed and picking resumes
+        this.sendToActiveTab(this.enableMsgType(this.activeMode)).catch(() => {});
       } else {
         this.clearContext();
       }
@@ -472,6 +499,8 @@ class PopupUI {
     btn.disabled = loading;
     this.get('executeText').classList.toggle('hidden', loading);
     this.get('executeSpinner').classList.toggle('hidden', !loading);
+    this.get<HTMLTextAreaElement>('instruction').disabled = loading;
+    this.get('loadingOverlay').classList.toggle('hidden', !loading);
   }
 
   private toastTimer: ReturnType<typeof setTimeout> | null = null;
