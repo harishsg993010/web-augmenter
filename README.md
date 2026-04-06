@@ -100,3 +100,8 @@ src/
 ## Privacy
 
 All features and settings are stored locally in your browser (`chrome.storage.local`). The extension only sends page structure and your instruction to the configured AI API — no personal data is collected or stored externally.
+
+## Contributors
+
+- [Harish Santhanalakshmi Ganesan](https://www.linkedin.com/in/harish-santhanalakshmi-ganesan-31ba96171/)
+- [Akilan Amithasagaran](https://www.linkedin.com/in/akilan-amithasagaran-315aa37a/)
