@@ -462,10 +462,55 @@ body {
 }
 .api-dialog-btn.danger:hover { background: #fecdd3; }
 
+.api-dialog-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.api-dialog-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+}
+
+.api-dialog-subtitle {
+    font-size: 12px;
+    color: #888;
+    margin: 0;
+}
+
+.api-dialog-select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1.5px solid #e0e0e0;
+    border-radius: 9px;
+    font-size: 13px;
+    font-family: inherit;
+    color: #1a1a1a;
+    background: #fafafa;
+    cursor: pointer;
+    transition: border-color 0.15s, box-shadow 0.15s;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%23888' fill='none' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+    padding-right: 32px;
+}
+
+.api-dialog-select:focus {
+    border-color: #2558d8;
+    box-shadow: 0 0 0 3px rgba(55,107,239,0.12);
+    background-color: white;
+}
+
 .api-dialog-input {
     width: 100%;
     padding: 10px 12px;
-    border: 1.5px solid #376bef;
+    border: 1.5px solid #e0e0e0;
     border-radius: 9px;
     font-size: 13px;
     font-family: inherit;

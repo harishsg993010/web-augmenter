@@ -459,11 +459,14 @@ class BackgroundService {
       const data = await persistence.getStorageData();
       const settings = data.globalSettings;
 
-      if (settings.apiKey) {
-        llmClient.updateConfig({
-          apiKey: settings.apiKey
-        });
-      }
+      const provider = settings.provider || 'anthropic';
+      llmClient.updateConfig({
+        apiKey: settings.apiKey,
+        provider,
+        model: provider === 'openrouter'
+          ? (settings.openRouterModel || 'anthropic/claude-sonnet-4')
+          : 'claude-sonnet-4-5-20250929'
+      });
     } catch (error) {
       console.warn('Failed to update LLM client config:', error);
     }

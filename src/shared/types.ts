@@ -141,5 +141,7 @@ export interface StorageData {
   globalSettings: {
     includeScreenshotByDefault: boolean;
     apiKey?: string;
+    provider?: 'anthropic' | 'openrouter';
+    openRouterModel?: string;
   };
 }

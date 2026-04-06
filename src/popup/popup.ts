@@ -75,22 +75,54 @@ class PopupUI {
   private async loadSettings(): Promise<void> {
     const result = await chrome.storage.local.get(['globalSettings']);
     const settings = result.globalSettings || {};
-    this.setApiKeyUI(!!(settings.apiKey));
+    this.setApiKeyUI(!!(settings.apiKey), settings.provider, settings.openRouterModel);
   }
 
-  private setApiKeyUI(hasKey: boolean): void {
+  private setApiKeyUI(hasKey: boolean, provider?: string, model?: string): void {
     const btn = this.get('apiKeyBtn');
     btn.classList.toggle('has-key', hasKey);
     this.get('apiKeyIconLocked').classList.toggle('hidden', !hasKey);
     this.get('apiKeyIconUnlocked').classList.toggle('hidden', hasKey);
     this.get('apiDialogNoKey').classList.toggle('hidden', hasKey);
     this.get('apiDialogHasKey').classList.toggle('hidden', !hasKey);
-    if (!hasKey) this.get<HTMLInputElement>('apiKey').value = '';
+    if (!hasKey) {
+      this.get<HTMLInputElement>('apiKey').value = '';
+      // Restore saved provider/model selection when opening setup
+      const savedProvider = provider || 'anthropic';
+      this.get<HTMLSelectElement>('providerSelect').value = savedProvider;
+      this.updateProviderUI(savedProvider);
+      if (model) this.get<HTMLInputElement>('modelInput').value = model;
+    } else {
+      // Show current provider info in the removal dialog
+      const providerName = provider === 'openrouter' ? 'OpenRouter' : 'Anthropic';
+      const info = model && provider === 'openrouter'
+        ? `${providerName} (${model})`
+        : providerName;
+      this.get('currentProviderInfo').textContent = `Provider: ${info}`;
+    }
+  }
+
+  private updateProviderUI(provider: string): void {
+    const isOpenRouter = provider === 'openrouter';
+    this.get('modelField').classList.toggle('hidden', !isOpenRouter);
+    this.get<HTMLInputElement>('apiKey').placeholder = isOpenRouter
+      ? 'Paste your OpenRouter API key'
+      : 'Paste your Anthropic API key';
   }
 
   private openApiKeyDialog(): void {
     this.get('apiKeyDialog').classList.remove('hidden');
     if (!this.get('apiDialogNoKey').classList.contains('hidden')) {
+      // Load current settings into form
+      chrome.storage.local.get(['globalSettings']).then(result => {
+        const settings = result.globalSettings || {};
+        const provider = settings.provider || 'anthropic';
+        this.get<HTMLSelectElement>('providerSelect').value = provider;
+        this.updateProviderUI(provider);
+        if (settings.openRouterModel) {
+          this.get<HTMLInputElement>('modelInput').value = settings.openRouterModel;
+        }
+      });
       setTimeout(() => this.get<HTMLInputElement>('apiKey').focus(), 50);
     }
   }
@@ -102,10 +134,18 @@ class PopupUI {
   private async saveApiKey(): Promise<void> {
     const key = this.get<HTMLInputElement>('apiKey').value.trim();
     if (!key) return;
+    const provider = this.get<HTMLSelectElement>('providerSelect').value as 'anthropic' | 'openrouter';
+    const model = this.get<HTMLInputElement>('modelInput').value.trim();
+
     const result = await chrome.storage.local.get(['globalSettings']);
-    const settings = { ...(result.globalSettings || {}), apiKey: key };
+    const settings = {
+      ...(result.globalSettings || {}),
+      apiKey: key,
+      provider,
+      openRouterModel: provider === 'openrouter' ? (model || 'anthropic/claude-sonnet-4') : undefined
+    };
     await chrome.runtime.sendMessage({ type: 'UPDATE_GLOBAL_SETTINGS', settings });
-    this.setApiKeyUI(true);
+    this.setApiKeyUI(true, provider, settings.openRouterModel);
     this.closeApiKeyDialog();
   }
 
@@ -113,6 +153,8 @@ class PopupUI {
     const result = await chrome.storage.local.get(['globalSettings']);
     const settings = { ...(result.globalSettings || {}) };
     delete settings.apiKey;
+    delete settings.provider;
+    delete settings.openRouterModel;
     await chrome.storage.local.set({ globalSettings: settings });
     this.setApiKeyUI(false);
     this.closeApiKeyDialog();
@@ -478,6 +520,9 @@ class PopupUI {
     this.get('removeApiKeyBtn').addEventListener('click', () => this.removeApiKey());
     this.get<HTMLInputElement>('apiKey').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') this.saveApiKey();
+    });
+    this.get<HTMLSelectElement>('providerSelect').addEventListener('change', (e) => {
+      this.updateProviderUI((e.target as HTMLSelectElement).value);
     });
   }
 

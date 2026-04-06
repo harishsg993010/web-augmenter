@@ -13,8 +13,22 @@
         <div class="api-dialog-sheet">
             <!-- No key: enter key -->
             <div id="apiDialogNoKey" class="api-dialog-body">
-                <p class="api-dialog-title">Add API Key</p>
-                <input type="password" id="apiKey" class="api-dialog-input" placeholder="Paste your Anthropic API key" autocomplete="off" spellcheck="false">
+                <p class="api-dialog-title">Configure AI Provider</p>
+                <div class="api-dialog-field">
+                    <label class="api-dialog-label" for="providerSelect">Provider</label>
+                    <select id="providerSelect" class="api-dialog-select">
+                        <option value="anthropic">Anthropic</option>
+                        <option value="openrouter">OpenRouter</option>
+                    </select>
+                </div>
+                <div id="modelField" class="api-dialog-field hidden">
+                    <label class="api-dialog-label" for="modelInput">Model</label>
+                    <input type="text" id="modelInput" class="api-dialog-input" placeholder="e.g. openai/gpt-4.1" autocomplete="off" spellcheck="false">
+                </div>
+                <div class="api-dialog-field">
+                    <label class="api-dialog-label" for="apiKey">API Key</label>
+                    <input type="password" id="apiKey" class="api-dialog-input" placeholder="Paste your Anthropic API key" autocomplete="off" spellcheck="false">
+                </div>
                 <div class="api-dialog-actions">
                     <button id="apiKeyDialogClose" class="api-dialog-btn cancel">Cancel</button>
                     <button id="apiKeySaveBtn" class="api-dialog-btn confirm">OK</button>
@@ -23,6 +37,7 @@
             <!-- Has key: confirm removal -->
             <div id="apiDialogHasKey" class="api-dialog-body hidden">
                 <p class="api-dialog-title">Remove API key?</p>
+                <p id="currentProviderInfo" class="api-dialog-subtitle"></p>
                 <div class="api-dialog-actions">
                     <button id="apiKeyDialogCancelRemove" class="api-dialog-btn cancel">Cancel</button>
                     <button id="removeApiKeyBtn" class="api-dialog-btn danger">Remove</button>
