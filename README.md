@@ -6,7 +6,6 @@ Web Augmenter is a Chrome side panel extension that lets you modify any website 
 
 [Landing Page](https://harishsg993010.github.io/web-augmenter/) · [Demo](https://youtu.be/LavXl2fs2IQ)
 
-![Web Augmenter](screenshots/1.png)
 
 ## Features
 
