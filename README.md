@@ -42,10 +42,6 @@ Open the side panel by clicking the Web Augmenter icon in the Chrome toolbar.
 | **Inspect** | Click **INSPECT** tab | Click an element on the page, then describe the change |
 | **Draw** | Click **DRAW** tab | Draw a rectangle on the page, then describe the UI to create |
 
-Keyboard shortcuts (on the active page):
-- `Ctrl+Shift+E` — toggle Inspect / Visual Editing mode
-- `Ctrl+Shift+U` — toggle Draw / UI Generation mode
-
 ### API Setup
 
 Click the key icon in the top-right of the panel to configure your AI provider.
