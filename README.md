@@ -4,7 +4,7 @@
 
 Web Augmenter is a Chrome side panel extension that lets you modify any website by describing what you want in plain English. It uses AI to generate and inject CSS/JavaScript changes on the fly.
 
-[![Demo](https://img.youtube.com/vi/LavXl2fs2IQ/maxresdefault.jpg)](https://youtu.be/LavXl2fs2IQ)
+[Demo](https://youtu.be/LavXl2fs2IQ)
 
 ## Features
 
@@ -26,6 +26,7 @@ Web Augmenter is a Chrome side panel extension that lets you modify any website 
    - Go to `chrome://extensions/`
    - Enable **Developer mode**
    - Click **Load unpacked** and select the `dist` folder
+4. After loading, click **Details** on the extension and enable **Allow user scripts**
 
 ## Usage
 
@@ -100,7 +101,3 @@ src/
 ## Privacy
 
 All features and settings are stored locally in your browser (`chrome.storage.local`). The extension only sends page structure and your instruction to the configured AI API — no personal data is collected or stored externally.
-
-## License
-
-MIT
