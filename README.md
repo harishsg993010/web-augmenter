@@ -4,7 +4,7 @@
 
 Web Augmenter is a Chrome side panel extension that lets you modify any website by describing what you want in plain English. It uses AI to generate and inject CSS/JavaScript changes on the fly.
 
-[Landing Page](https://harishsg993010.github.io/web-augmenter/) · [Demo](https://youtu.be/LavXl2fs2IQ)
+[Landing Page](https://harishsg993010.github.io/web-augmenter/) · [Demo](https://youtu.be/fowkw8RCs-M)
 
 ![Web Augmenter](screenshots/1.png)
 
